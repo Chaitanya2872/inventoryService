@@ -1,0 +1,49 @@
+server:
+  port: 8082  # Different port from gateway
+
+spring:
+  application:
+    name: inventory-service  # This should match your service name
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/inventoryservice_db
+    username: ${DB_USERNAME:postgres}  # Replace with your actual username
+    password: ${DB_PASSWORD:postgres}  # Replace with your actual password
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update  # Use 'create-drop' for development, 'validate' for production
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+    register-with-eureka: true
+    fetch-registry: true
+  instance:
+    hostname: localhost
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+
+# JWT Configuration
+jwt:
+  secret: mySecretKeyForJWTShouldBeAtLeast256BitsLongForHS256Algorithm1234567890
+  expiration: 86400000
+
+logging:
+  level:
+    root: INFO
+    com.bmsedge.inventory: DEBUG
+    org.springframework.security: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
