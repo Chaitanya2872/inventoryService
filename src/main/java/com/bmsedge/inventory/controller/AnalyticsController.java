@@ -92,7 +92,7 @@ public class AnalyticsController {
     }
 
     /**
-     * NEW ENDPOINT: Get item consumption heatmap
+     * ITEM HEATMAP ENDPOINT: Get item consumption heatmap
      * Usage: /api/analytics/item-heatmap/{itemId}?period=daily&startDate=2025-01-01&endDate=2025-07-31
      */
     @GetMapping("/item-heatmap/{itemId}")
@@ -114,7 +114,8 @@ public class AnalyticsController {
     }
 
     /**
-     * NEW ENDPOINT: Get cost distribution by category (for donut chart)
+     * FIXED ENDPOINT: Get cost distribution by category (for donut chart)
+     * This now properly handles data from January 2025 and provides actual costs
      * Usage: /api/analytics/cost-distribution?period=monthly&startDate=2025-01-01&endDate=2025-07-31
      */
     @GetMapping("/cost-distribution")
@@ -135,7 +136,7 @@ public class AnalyticsController {
     }
 
     /**
-     * NEW ENDPOINT: Get stock movement analysis
+     * STOCK MOVEMENTS ENDPOINT: Get stock movement analysis
      * Usage: /api/analytics/stock-movements?period=monthly&categoryId=1&itemId=5
      */
     @GetMapping("/stock-movements")
@@ -158,7 +159,7 @@ public class AnalyticsController {
     }
 
     /**
-     * ENHANCED ENDPOINT: Get core inventory stock levels with detailed metrics
+     * STOCK LEVELS ENDPOINT: Get core inventory stock levels with detailed metrics
      * Usage: /api/analytics/stock-levels?categoryId=1&alertLevel=CRITICAL&sortBy=coverageDays&sortOrder=asc
      */
     @GetMapping("/stock-levels")
@@ -233,9 +234,219 @@ public class AnalyticsController {
     }
 
     /**
-     * FOOTFALL INTEGRATION ENDPOINTS
+     * BUDGET CONSUMPTION ENDPOINT: Budget consumption analysis
+     * Usage: /api/analytics/budget-consumption?period=monthly&budgetType=category
      */
+    @GetMapping("/budget-consumption")
+    public ResponseEntity<Map<String, Object>> getBudgetConsumptionAnalysis(
+            @RequestParam(value = "period", defaultValue = "monthly") String period,
+            @RequestParam(value = "startDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(value = "endDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(value = "budgetType", defaultValue = "category") String budgetType,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "department", required = false) String department,
+            @RequestParam(value = "includeProjections", defaultValue = "true") boolean includeProjections) {
 
+        try {
+            Map<String, Object> budgetAnalysis = analyticsService.getBudgetConsumptionAnalysis(
+                    period, startDate, endDate, budgetType, categoryId, department, includeProjections);
+            return ResponseEntity.ok(budgetAnalysis);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error analyzing budget consumption");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * FIXED ENDPOINT: Enhanced Cost Distribution Analysis
+     * This now provides the detailed monthly breakdown you requested with:
+     * - Every month in the period
+     * - Every category within each month
+     * - Every item within each category
+     * - Costs, quantities, percentages for all levels
+     *
+     * Usage: /api/analytics/enhanced-cost-distribution?breakdown=detailed&includeProjections=true
+     * The monthlyBreakdown field in the response contains the structure you need
+     */
+    @GetMapping("/enhanced-cost-distribution")
+    public ResponseEntity<Map<String, Object>> getEnhancedCostDistribution(
+            @RequestParam(value = "period", defaultValue = "monthly") String period,
+            @RequestParam(value = "startDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(value = "endDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(value = "breakdown", defaultValue = "summary") String breakdown,
+            @RequestParam(value = "includeProjections", defaultValue = "false") boolean includeProjections,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "department", required = false) String department,
+            @RequestParam(value = "costCenter", required = false) String costCenter) {
+
+        try {
+            Map<String, Object> enhancedCostDistribution = analyticsService.getEnhancedCostDistribution(
+                    period, startDate, endDate, breakdown, includeProjections, categoryId, department, costCenter);
+            return ResponseEntity.ok(enhancedCostDistribution);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error calculating enhanced cost distribution");
+            errorResponse.put("message", e.getMessage());
+            errorResponse.put("details", "The system is now properly configured to use actual data from January 2025. " +
+                    "Check the monthlyBreakdown field in the response for detailed monthly cost analysis by category and items.");
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * BUDGET VS ACTUAL ENDPOINT: Compare budgeted amounts with actual consumption and costs
+     * Usage: /api/analytics/budget-vs-actual?year=2025&granularity=monthly&includeVariance=true
+     */
+    @GetMapping("/budget-vs-actual")
+    public ResponseEntity<Map<String, Object>> getBudgetVsActualComparison(
+            @RequestParam(value = "year", defaultValue = "2025") int year,
+            @RequestParam(value = "granularity", defaultValue = "monthly") String granularity,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "department", required = false) String department,
+            @RequestParam(value = "includeForecasts", defaultValue = "true") boolean includeForecasts,
+            @RequestParam(value = "includeVariance", defaultValue = "true") boolean includeVariance,
+            @RequestParam(value = "quarter", required = false) Integer quarter) {
+
+        try {
+            Map<String, Object> budgetComparison = analyticsService.getBudgetVsActualComparison(
+                    year, granularity, categoryId, department, includeForecasts, includeVariance, quarter);
+            return ResponseEntity.ok(budgetComparison);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error comparing budget vs actual");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * COST OPTIMIZATION ENDPOINT: AI-driven cost optimization suggestions based on consumption patterns
+     * Usage: /api/analytics/cost-optimization?analysisType=variance&threshold=0.15
+     */
+    @GetMapping("/cost-optimization")
+    public ResponseEntity<Map<String, Object>> getCostOptimizationRecommendations(
+            @RequestParam(value = "analysisType", defaultValue = "variance") String analysisType,
+            @RequestParam(value = "threshold", defaultValue = "0.10") double threshold,
+            @RequestParam(value = "period", defaultValue = "monthly") String period,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "minSavings", defaultValue = "100") double minSavings,
+            @RequestParam(value = "includeAlternatives", defaultValue = "true") boolean includeAlternatives) {
+
+        try {
+            Map<String, Object> optimization = analyticsService.getCostOptimizationRecommendations(
+                    analysisType, threshold, period, categoryId, minSavings, includeAlternatives);
+            return ResponseEntity.ok(optimization);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error generating cost optimization recommendations");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * BURN RATE ANALYSIS ENDPOINT: Analyze current spending rate vs budget timeline
+     * Usage: /api/analytics/burn-rate-analysis?targetDate=2025-12-31&includeTrends=true
+     */
+    @GetMapping("/burn-rate-analysis")
+    public ResponseEntity<Map<String, Object>> getBurnRateAnalysis(
+            @RequestParam(value = "targetDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate targetDate,
+            @RequestParam(value = "includeTrends", defaultValue = "true") boolean includeTrends,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "department", required = false) String department,
+            @RequestParam(value = "alertThreshold", defaultValue = "0.80") double alertThreshold) {
+
+        try {
+            Map<String, Object> burnRateAnalysis = analyticsService.getBurnRateAnalysis(
+                    targetDate, includeTrends, categoryId, department, alertThreshold);
+            return ResponseEntity.ok(burnRateAnalysis);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error analyzing burn rate");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * COST PER EMPLOYEE ENDPOINT: Calculate cost efficiency metrics per employee with footfall integration
+     * Usage: /api/analytics/cost-per-employee?period=monthly&includeComparisons=true
+     */
+    @GetMapping("/cost-per-employee")
+    public ResponseEntity<Map<String, Object>> getCostPerEmployeeAnalysis(
+            @RequestParam(value = "period", defaultValue = "monthly") String period,
+            @RequestParam(value = "startDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(value = "endDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "department", required = false) String department,
+            @RequestParam(value = "includeComparisons", defaultValue = "true") boolean includeComparisons) {
+
+        try {
+            Map<String, Object> costPerEmployeeAnalysis = analyticsService.getCostPerEmployeeAnalysis(
+                    period, startDate, endDate, categoryId, department, includeComparisons);
+            return ResponseEntity.ok(costPerEmployeeAnalysis);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error calculating cost per employee");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * SEASONAL COST ANALYSIS ENDPOINT: Analyze seasonal patterns in consumption and costs
+     * Usage: /api/analytics/seasonal-cost-analysis?years=2&includeForecasts=true
+     */
+    @GetMapping("/seasonal-cost-analysis")
+    public ResponseEntity<Map<String, Object>> getSeasonalCostAnalysis(
+            @RequestParam(value = "years", defaultValue = "2") int years,
+            @RequestParam(value = "includeForecasts", defaultValue = "true") boolean includeForecasts,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "granularity", defaultValue = "monthly") String granularity) {
+
+        try {
+            Map<String, Object> seasonalAnalysis = analyticsService.getSeasonalCostAnalysis(
+                    years, includeForecasts, categoryId, granularity);
+            return ResponseEntity.ok(seasonalAnalysis);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error analyzing seasonal cost patterns");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * COST VARIANCE ALERTS ENDPOINT: Get alerts for significant cost variances and budget overruns
+     * Usage: /api/analytics/cost-variance-alerts?severity=high&activeOnly=true
+     */
+    @GetMapping("/cost-variance-alerts")
+    public ResponseEntity<Map<String, Object>> getCostVarianceAlerts(
+            @RequestParam(value = "severity", defaultValue = "all") String severity,
+            @RequestParam(value = "activeOnly", defaultValue = "true") boolean activeOnly,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "department", required = false) String department,
+            @RequestParam(value = "threshold", defaultValue = "0.10") double threshold) {
+
+        try {
+            Map<String, Object> varianceAlerts = analyticsService.getCostVarianceAlerts(
+                    severity, activeOnly, categoryId, department, threshold);
+            return ResponseEntity.ok(varianceAlerts);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving cost variance alerts");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    // ===== FOOTFALL INTEGRATION ENDPOINTS =====
+
+    /**
+     * FOOTFALL TRENDS ENDPOINT: Get footfall trends analysis
+     */
     @GetMapping("/footfall-trends")
     public ResponseEntity<Map<String, Object>> getFootfallTrends(
             @RequestParam(value = "period", defaultValue = "daily") String period,
@@ -253,6 +464,9 @@ public class AnalyticsController {
         }
     }
 
+    /**
+     * FOOTFALL UPLOAD ENDPOINT: Upload footfall data
+     */
     @PostMapping("/footfall/upload")
     public ResponseEntity<Map<String, Object>> uploadFootfallData(
             @RequestParam("file") MultipartFile file) {
@@ -273,6 +487,9 @@ public class AnalyticsController {
         }
     }
 
+    /**
+     * FOOTFALL CHECK ENDPOINT: Check if footfall data exists for a date
+     */
     @GetMapping("/footfall/check")
     public ResponseEntity<Map<String, Object>> checkFootfallData(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
@@ -295,6 +512,9 @@ public class AnalyticsController {
         }
     }
 
+    /**
+     * FOOTFALL DATA RANGE ENDPOINT: Get available footfall data range
+     */
     @GetMapping("/footfall/data-range")
     public ResponseEntity<Map<String, Object>> getFootfallDataRange() {
         try {
@@ -314,6 +534,9 @@ public class AnalyticsController {
         }
     }
 
+    /**
+     * PER-EMPLOYEE CONSUMPTION ENDPOINT: Calculate consumption metrics per employee
+     */
     @GetMapping("/footfall/per-employee-consumption")
     public ResponseEntity<Map<String, Object>> getPerEmployeeConsumption(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
@@ -322,7 +545,7 @@ public class AnalyticsController {
             @RequestParam(required = false) Long itemId) {
 
         try {
-            // Use realistic defaults
+            // Use realistic defaults based on actual data range
             if (endDate == null) endDate = LocalDate.of(2025, 7, 31);
             if (startDate == null) startDate = LocalDate.of(2025, 1, 1);
 
