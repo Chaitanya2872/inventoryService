@@ -4,11 +4,16 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.bmsedge.inventory.util.BigDecimalDeserializer;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.math.BigDecimal;
 
+@Setter
+@Getter
 public class ReceiptRequest {
 
+    // Getters and Setters
     @NotNull(message = "Quantity is required")
     @Positive(message = "Quantity must be positive")
     @JsonDeserialize(using = BigDecimalDeserializer.class)
@@ -32,19 +37,4 @@ public class ReceiptRequest {
         this.referenceNumber = referenceNumber;
     }
 
-    // Getters and Setters
-    public BigDecimal getQuantity() { return quantity; }
-    public void setQuantity(BigDecimal quantity) { this.quantity = quantity; }
-
-    public BigDecimal getUnitPrice() { return unitPrice; }
-    public void setUnitPrice(BigDecimal unitPrice) { this.unitPrice = unitPrice; }
-
-    public String getReferenceNumber() { return referenceNumber; }
-    public void setReferenceNumber(String referenceNumber) { this.referenceNumber = referenceNumber; }
-
-    public String getSupplier() { return supplier; }
-    public void setSupplier(String supplier) { this.supplier = supplier; }
-
-    public String getNotes() { return notes; }
-    public void setNotes(String notes) { this.notes = notes; }
 }
