@@ -225,8 +225,7 @@ public class FileUploadService {
                             // Set min/max stock levels based on current quantity
                             int minStock = Math.max(5, currentQty.intValue() / 10);
                             int maxStock = Math.max(100, currentQty.intValue() * 2);
-                            itemRequest.setMinStockLevel(minStock);
-                            itemRequest.setMaxStockLevel(maxStock);
+
 
                             if (price != null && price.compareTo(BigDecimal.ZERO) > 0) {
                                 itemRequest.setUnitPrice(price);
@@ -367,19 +366,27 @@ public class FileUploadService {
     }
 
     private void validateAndFixItemRequest(ItemRequest itemRequest) {
-        // Fix zero or null values
-        if (itemRequest.getMaxStockLevel() == null || itemRequest.getMaxStockLevel() == 0) {
+        // Fix reorder level
+        if (itemRequest.getReorderLevel() == null ||
+                itemRequest.getReorderLevel().compareTo(BigDecimal.ZERO) == 0) {
+
             Integer currentQty = itemRequest.getCurrentQuantity();
-            itemRequest.setMaxStockLevel(currentQty != null ? Math.max(currentQty + 50, 100) : 100);
+            int fallbackLevel = (currentQty != null) ? Math.max(currentQty / 10, 5) : 5;
+            itemRequest.setReorderLevel(BigDecimal.valueOf(fallbackLevel));
         }
 
-        if (itemRequest.getMinStockLevel() == null || itemRequest.getMinStockLevel() == 0) {
-            itemRequest.setMinStockLevel(5);
-        }
-
-        // Ensure min < max
-        if (itemRequest.getMinStockLevel() >= itemRequest.getMaxStockLevel()) {
-            itemRequest.setMaxStockLevel(itemRequest.getMinStockLevel() + 50);
+        // Fix stock alert level
+        if (itemRequest.getStockAlertLevel() == null || itemRequest.getStockAlertLevel().trim().isEmpty()) {
+            if (itemRequest.getCurrentQuantity() != null && itemRequest.getReorderLevel() != null) {
+                BigDecimal currentQtyBD = BigDecimal.valueOf(itemRequest.getCurrentQuantity());
+                if (currentQtyBD.compareTo(itemRequest.getReorderLevel()) <= 0) {
+                    itemRequest.setStockAlertLevel("WARNING");
+                } else {
+                    itemRequest.setStockAlertLevel("NORMAL");
+                }
+            } else {
+                itemRequest.setStockAlertLevel("NORMAL");
+            }
         }
 
         // Fix unit of measurement
@@ -392,6 +399,8 @@ public class FileUploadService {
             itemRequest.setCurrentQuantity(0);
         }
     }
+
+
 
     // Keep the CSV parsing method as is
     private Map<String, Object> parseCSVFile(MultipartFile file, List<String> errors) throws IOException {

@@ -6,164 +6,271 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Enhanced ConsumptionRecordRepository with all required queries
+ */
 @Repository
 public interface ConsumptionRecordRepository extends JpaRepository<ConsumptionRecord, Long> {
 
-    Optional<ConsumptionRecord> findByItemIdAndConsumptionDate(Long itemId, LocalDate consumptionDate);
+    /**
+     * Find record by item and date (unique combination)
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr WHERE cr.item.id = :itemId AND cr.consumptionDate = :date")
+    Optional<ConsumptionRecord> findByItemIdAndConsumptionDate(@Param("itemId") Long itemId,
+                                                               @Param("date") LocalDate date);
 
-    // ADDED: Method used by ConsumptionDataImportService
-    Optional<ConsumptionRecord> findByItemAndConsumptionDate(Item item, LocalDate consumptionDate);
+    /**
+     * Find all records for an item within date range
+     */
+    List<ConsumptionRecord> findByItemAndConsumptionDateBetween(Item item,
+                                                                LocalDate startDate,
+                                                                LocalDate endDate);
 
-    // Total consumption by item and date
-    @Query("SELECT SUM(cr.consumedQuantity) FROM ConsumptionRecord cr WHERE cr.item.id = :itemId AND cr.consumptionDate = :date")
-    BigDecimal getTotalConsumptionByItemAndDate(@Param("itemId") Long itemId, @Param("date") LocalDate date);
+    /**
+     * Find records by item ID and date range
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr WHERE cr.item.id = :itemId " +
+            "AND cr.consumptionDate BETWEEN :startDate AND :endDate " +
+            "ORDER BY cr.consumptionDate")
+    List<ConsumptionRecord> findByItemIdAndConsumptionDateBetween(@Param("itemId") Long itemId,
+                                                                  @Param("startDate") LocalDate startDate,
+                                                                  @Param("endDate") LocalDate endDate);
 
-    // Total consumption by category and date
-    @Query("SELECT SUM(cr.consumedQuantity) FROM ConsumptionRecord cr WHERE cr.item.category.categoryName = :categoryName AND cr.consumptionDate = :date")
-    BigDecimal getTotalConsumptionByCategoryAndDate(@Param("categoryName") String categoryName, @Param("date") LocalDate date);
+    /**
+     * Find all records within date range
+     */
+    List<ConsumptionRecord> findByConsumptionDateBetween(LocalDate startDate, LocalDate endDate);
 
-    // Total consumption in period
-    @Query("SELECT SUM(cr.consumedQuantity) FROM ConsumptionRecord cr WHERE cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate")
-    BigDecimal getTotalConsumptionInPeriod(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
-
-    // Total consumption by item in period
-    @Query("SELECT SUM(cr.consumedQuantity) FROM ConsumptionRecord cr WHERE cr.item.id = :itemId AND cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate")
-    BigDecimal getTotalConsumptionByItemInPeriod(@Param("itemId") Long itemId, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
-
-    // Total consumption by category in period
-    @Query("SELECT SUM(cr.consumedQuantity) FROM ConsumptionRecord cr WHERE cr.item.category.categoryName = :categoryName AND cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate")
-    BigDecimal getTotalConsumptionByCategoryInPeriod(@Param("categoryName") String categoryName, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
-
-    // Average daily consumption for an item
-    @Query("SELECT AVG(cr.consumedQuantity) FROM ConsumptionRecord cr WHERE cr.item.id = :itemId AND cr.consumptionDate >= :startDate")
-    BigDecimal getAverageDailyConsumption(@Param("itemId") Long itemId, @Param("startDate") LocalDate startDate);
-
-    // Top consuming items in period - using Pageable instead of limit parameter
-    @Query("SELECT i.itemName, c.categoryName, SUM(cr.consumedQuantity) as totalQty, " +
-            "SUM(cr.consumedQuantity * i.unitPrice) as totalCost, i.id " +
-            "FROM ConsumptionRecord cr " +
-            "JOIN cr.item i " +
-            "JOIN i.category c " +
-            "WHERE cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate " +
-            "GROUP BY i.itemName, c.categoryName, i.id " +
-            "ORDER BY totalQty DESC")
-    List<Object[]> getTopConsumersInPeriod(@Param("startDate") LocalDate startDate,
-                                           @Param("endDate") LocalDate endDate,
-                                           Pageable pageable);
-
-    // NEW: Method for category consumption with cost calculation
-    @Query("SELECT c.categoryName, " +
-            "SUM(cr.consumedQuantity) as totalQty, " +
-            "AVG(i.unitPrice) as avgPrice " +
-            "FROM ConsumptionRecord cr " +
-            "JOIN cr.item i " +
-            "JOIN i.category c " +
-            "WHERE cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate " +
-            "GROUP BY c.categoryName " +
-            "ORDER BY totalQty DESC")
-    List<Object[]> getCategoryConsumptionWithCost(@Param("startDate") LocalDate startDate,
-                                                  @Param("endDate") LocalDate endDate);
-
-    // NEW: Method for item consumption between dates
-    @Query("SELECT cr FROM ConsumptionRecord cr " +
-            "WHERE cr.item = :item AND cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate " +
-            "ORDER BY cr.consumptionDate ASC")
-    List<ConsumptionRecord> findByItemAndConsumptionDateBetween(@Param("item") Item item,
-                                                                @Param("startDate") LocalDate startDate,
-                                                                @Param("endDate") LocalDate endDate);
-
-    // ADDITIONAL USEFUL METHODS for enhanced analytics
-
-    // Get consumption records by category and date range
-    @Query("SELECT cr FROM ConsumptionRecord cr " +
-            "WHERE cr.item.category.id = :categoryId AND cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate " +
-            "ORDER BY cr.consumptionDate ASC")
+    /**
+     * Find records by category and date range
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr WHERE cr.item.category.id = :categoryId " +
+            "AND cr.consumptionDate BETWEEN :startDate AND :endDate " +
+            "ORDER BY cr.consumptionDate")
     List<ConsumptionRecord> findByCategoryAndDateBetween(@Param("categoryId") Long categoryId,
                                                          @Param("startDate") LocalDate startDate,
                                                          @Param("endDate") LocalDate endDate);
 
-    // Get all consumption records in date range
-    @Query("SELECT cr FROM ConsumptionRecord cr WHERE cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate ORDER BY cr.consumptionDate ASC")
-    List<ConsumptionRecord> findByConsumptionDateBetween(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+    /**
+     * Alternative method name for category date range query (THIS IS THE MISSING METHOD)
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr WHERE cr.item.category.id = :categoryId " +
+            "AND cr.consumptionDate BETWEEN :startDate AND :endDate")
+    List<ConsumptionRecord> findByCategoryIdAndDateRange(@Param("categoryId") Long categoryId,
+                                                         @Param("startDate") LocalDate startDate,
+                                                         @Param("endDate") LocalDate endDate);
 
-    // Get consumption records with employee count
-    @Query("SELECT cr FROM ConsumptionRecord cr WHERE cr.employeeCount IS NOT NULL AND cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate")
-    List<ConsumptionRecord> findRecordsWithEmployeeCount(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+    /**
+     * Calculate average daily consumption for an item
+     */
+    @Query("SELECT AVG(cr.consumedQuantity) FROM ConsumptionRecord cr " +
+            "WHERE cr.item.id = :itemId AND cr.consumptionDate >= :startDate")
+    BigDecimal getAverageDailyConsumption(@Param("itemId") Long itemId,
+                                          @Param("startDate") LocalDate startDate);
 
-    // Get monthly consumption totals
-    @Query("SELECT FUNCTION('DATE_FORMAT', cr.consumptionDate, '%Y-%m') as month, " +
-            "SUM(cr.consumedQuantity) as totalConsumption, " +
-            "COUNT(DISTINCT cr.item.id) as uniqueItems " +
-            "FROM ConsumptionRecord cr " +
-            "WHERE cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate " +
-            "GROUP BY FUNCTION('DATE_FORMAT', cr.consumptionDate, '%Y-%m') " +
-            "ORDER BY month ASC")
-    List<Object[]> getMonthlyConsumptionTotals(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+    /**
+     * Get total consumption for an item in date range
+     */
+    @Query("SELECT SUM(cr.consumedQuantity) FROM ConsumptionRecord cr " +
+            "WHERE cr.item.id = :itemId AND cr.consumptionDate BETWEEN :startDate AND :endDate")
+    BigDecimal getTotalConsumption(@Param("itemId") Long itemId,
+                                   @Param("startDate") LocalDate startDate,
+                                   @Param("endDate") LocalDate endDate);
 
-    // Get weekly consumption totals
-    @Query("SELECT FUNCTION('YEARWEEK', cr.consumptionDate) as week, " +
-            "SUM(cr.consumedQuantity) as totalConsumption, " +
-            "COUNT(DISTINCT cr.item.id) as uniqueItems " +
-            "FROM ConsumptionRecord cr " +
-            "WHERE cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate " +
-            "GROUP BY FUNCTION('YEARWEEK', cr.consumptionDate) " +
-            "ORDER BY week ASC")
-    List<Object[]> getWeeklyConsumptionTotals(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+    /**
+     * Get total received quantity for an item in date range
+     */
+    @Query("SELECT SUM(cr.receivedQuantity) FROM ConsumptionRecord cr " +
+            "WHERE cr.item.id = :itemId AND cr.consumptionDate BETWEEN :startDate AND :endDate")
+    BigDecimal getTotalReceived(@Param("itemId") Long itemId,
+                                @Param("startDate") LocalDate startDate,
+                                @Param("endDate") LocalDate endDate);
 
-    // Get consumption with cost calculation
-    @Query("SELECT cr.consumptionDate, cr.consumedQuantity, " +
-            "(cr.consumedQuantity * i.unitPrice) as consumptionCost, " +
-            "i.itemName, c.categoryName " +
-            "FROM ConsumptionRecord cr " +
-            "JOIN cr.item i " +
-            "JOIN i.category c " +
-            "WHERE cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate " +
-            "ORDER BY cr.consumptionDate ASC")
-    List<Object[]> getConsumptionWithCost(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+    /**
+     * Find high consumption records
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr " +
+            "WHERE cr.consumedQuantity > cr.dailyConsumptionMean * 1.5 " +
+            "AND cr.consumptionDate >= :startDate")
+    List<ConsumptionRecord> findHighConsumptionRecords(@Param("startDate") LocalDate startDate);
 
-    // Get zero consumption items (items not consumed in period)
-    @Query("SELECT i FROM Item i WHERE i.id NOT IN (" +
-            "SELECT DISTINCT cr.item.id FROM ConsumptionRecord cr " +
-            "WHERE cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate)")
-    List<Item> getZeroConsumptionItems(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+    /**
+     * Find records with high volatility
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr " +
+            "WHERE cr.volatilityClassification IN ('HIGH', 'VERY_HIGH') " +
+            "AND cr.consumptionDate >= :startDate")
+    List<ConsumptionRecord> findHighVolatilityRecords(@Param("startDate") LocalDate startDate);
 
-    // Get highest consumption day for an item
-    @Query("SELECT cr.consumptionDate, MAX(cr.consumedQuantity) " +
-            "FROM ConsumptionRecord cr " +
-            "WHERE cr.item.id = :itemId AND cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate " +
-            "GROUP BY cr.consumptionDate " +
-            "ORDER BY MAX(cr.consumedQuantity) DESC")
-    List<Object[]> getHighestConsumptionDay(@Param("itemId") Long itemId,
-                                            @Param("startDate") LocalDate startDate,
-                                            @Param("endDate") LocalDate endDate);
-
-    // Get consumption pattern by day of week
-    @Query("SELECT FUNCTION('DAYNAME', cr.consumptionDate) as dayOfWeek, " +
-            "AVG(cr.consumedQuantity) as avgConsumption, " +
-            "COUNT(cr.id) as recordCount " +
-            "FROM ConsumptionRecord cr " +
-            "WHERE cr.item.id = :itemId AND cr.consumptionDate >= :startDate AND cr.consumptionDate <= :endDate " +
-            "GROUP BY FUNCTION('DAYOFWEEK', cr.consumptionDate), FUNCTION('DAYNAME', cr.consumptionDate) " +
-            "ORDER BY FUNCTION('DAYOFWEEK', cr.consumptionDate)")
-    List<Object[]> getConsumptionPatternByDayOfWeek(@Param("itemId") Long itemId,
-                                                    @Param("startDate") LocalDate startDate,
-                                                    @Param("endDate") LocalDate endDate);
-
-    // Get consumption trend (comparing periods)
+    /**
+     * Get consumption statistics for an item
+     */
     @Query("SELECT " +
-            "SUM(CASE WHEN cr.consumptionDate >= :currentPeriodStart THEN cr.consumedQuantity ELSE 0 END) as currentPeriodConsumption, " +
-            "SUM(CASE WHEN cr.consumptionDate < :currentPeriodStart THEN cr.consumedQuantity ELSE 0 END) as previousPeriodConsumption " +
+            "MIN(cr.consumedQuantity) as min, " +
+            "MAX(cr.consumedQuantity) as max, " +
+            "AVG(cr.consumedQuantity) as avg, " +
+            "COUNT(cr) as count " +
             "FROM ConsumptionRecord cr " +
-            "WHERE cr.item.id = :itemId AND cr.consumptionDate >= :previousPeriodStart AND cr.consumptionDate <= :currentPeriodEnd")
-    List<Object[]> getConsumptionTrend(@Param("itemId") Long itemId,
-                                       @Param("previousPeriodStart") LocalDate previousPeriodStart,
-                                       @Param("currentPeriodStart") LocalDate currentPeriodStart,
-                                       @Param("currentPeriodEnd") LocalDate currentPeriodEnd);
+            "WHERE cr.item.id = :itemId AND cr.consumptionDate >= :startDate")
+    Object[] getConsumptionStatistics(@Param("itemId") Long itemId,
+                                      @Param("startDate") LocalDate startDate);
+
+    /**
+     * Find records by department
+     */
+    List<ConsumptionRecord> findByDepartmentAndConsumptionDateBetween(String department,
+                                                                      LocalDate startDate,
+                                                                      LocalDate endDate);
+
+    /**
+     * Count records needing verification
+     */
+    @Query("SELECT COUNT(cr) FROM ConsumptionRecord cr " +
+            "WHERE cr.isVerified = false AND cr.consumptionDate >= :startDate")
+    long countUnverifiedRecords(@Param("startDate") LocalDate startDate);
+
+    /**
+     * Find records with waste above threshold
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr " +
+            "WHERE cr.wastePercentage > :threshold " +
+            "AND cr.consumptionDate >= :startDate")
+    List<ConsumptionRecord> findHighWasteRecords(@Param("threshold") BigDecimal threshold,
+                                                 @Param("startDate") LocalDate startDate);
+
+    /**
+     * Get latest consumption record for an item
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr " +
+            "WHERE cr.item.id = :itemId " +
+            "ORDER BY cr.consumptionDate DESC")
+    Optional<ConsumptionRecord> findLatestByItemId(@Param("itemId") Long itemId);
+
+    /**
+     * Delete old records before a certain date
+     */
+    void deleteByConsumptionDateBefore(LocalDate date);
+
+    /**
+     * Find records with no consumption
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr " +
+            "WHERE (cr.consumedQuantity = 0 OR cr.consumedQuantity IS NULL) " +
+            "AND cr.consumptionDate BETWEEN :startDate AND :endDate")
+    List<ConsumptionRecord> findZeroConsumptionRecords(@Param("startDate") LocalDate startDate,
+                                                       @Param("endDate") LocalDate endDate);
+
+    /**
+     * Get consumption trend data for analytics
+     */
+    @Query("SELECT cr.consumptionDate, SUM(cr.consumedQuantity), COUNT(DISTINCT cr.item.id) " +
+            "FROM ConsumptionRecord cr " +
+            "WHERE cr.consumptionDate BETWEEN :startDate AND :endDate " +
+            "GROUP BY cr.consumptionDate " +
+            "ORDER BY cr.consumptionDate")
+    List<Object[]> getConsumptionTrend(@Param("startDate") LocalDate startDate,
+                                       @Param("endDate") LocalDate endDate);
+
+    /**
+     * Find records for multiple items
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr " +
+            "WHERE cr.item.id IN :itemIds " +
+            "AND cr.consumptionDate BETWEEN :startDate AND :endDate " +
+            "ORDER BY cr.consumptionDate, cr.item.id")
+    List<ConsumptionRecord> findByItemIdsAndDateRange(@Param("itemIds") List<Long> itemIds,
+                                                      @Param("startDate") LocalDate startDate,
+                                                      @Param("endDate") LocalDate endDate);
+
+    /**
+     * Calculate per capita consumption for a date range
+     */
+    @Query("SELECT AVG(cr.consumptionPerCapita) FROM ConsumptionRecord cr " +
+            "WHERE cr.consumptionDate BETWEEN :startDate AND :endDate " +
+            "AND cr.consumptionPerCapita IS NOT NULL")
+    BigDecimal getAveragePerCapitaConsumption(@Param("startDate") LocalDate startDate,
+                                              @Param("endDate") LocalDate endDate);
+
+    /**
+     * Get efficiency metrics
+     */
+    @Query("SELECT AVG(cr.efficiencyScore), AVG(cr.wastePercentage) " +
+            "FROM ConsumptionRecord cr " +
+            "WHERE cr.item.category.id = :categoryId " +
+            "AND cr.consumptionDate BETWEEN :startDate AND :endDate")
+    Object[] getCategoryEfficiencyMetrics(@Param("categoryId") Long categoryId,
+                                          @Param("startDate") LocalDate startDate,
+                                          @Param("endDate") LocalDate endDate);
+
+    /**
+     * Find consumption records with specific volatility classification
+     */
+    List<ConsumptionRecord> findByVolatilityClassificationAndConsumptionDateBetween(
+            String volatilityClassification,
+            LocalDate startDate,
+            LocalDate endDate
+    );
+
+    /**
+     * Get records that need review
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr " +
+            "WHERE (cr.isVerified = false " +
+            "OR cr.wastePercentage > 10 " +
+            "OR cr.volatilityClassification = 'VERY_HIGH') " +
+            "AND cr.consumptionDate >= :startDate")
+    List<ConsumptionRecord> findRecordsNeedingReview(@Param("startDate") LocalDate startDate);
+
+    /**
+     * Find by item and consumption date
+     */
+    Optional<ConsumptionRecord> findByItemAndConsumptionDate(Item item, LocalDate consumptionDate);
+
+    /**
+     * Get consumption by category for a specific date
+     */
+    @Query("SELECT cr FROM ConsumptionRecord cr " +
+            "WHERE cr.item.category.id = :categoryId " +
+            "AND cr.consumptionDate = :date")
+    List<ConsumptionRecord> findByCategoryIdAndDate(@Param("categoryId") Long categoryId,
+                                                    @Param("date") LocalDate date);
+
+    /**
+     * Get total category consumption for a period
+     */
+    @Query("SELECT SUM(cr.consumedQuantity) FROM ConsumptionRecord cr " +
+            "WHERE cr.item.category.id = :categoryId " +
+            "AND cr.consumptionDate BETWEEN :startDate AND :endDate")
+    BigDecimal getTotalCategoryConsumption(@Param("categoryId") Long categoryId,
+                                           @Param("startDate") LocalDate startDate,
+                                           @Param("endDate") LocalDate endDate);
+
+    /**
+     * Find consumption patterns by day of week
+     */
+    @Query("SELECT FUNCTION('DAYOFWEEK', cr.consumptionDate) as dayOfWeek, " +
+            "AVG(cr.consumedQuantity) as avgConsumption " +
+            "FROM ConsumptionRecord cr " +
+            "WHERE cr.item.id = :itemId " +
+            "AND cr.consumptionDate BETWEEN :startDate AND :endDate " +
+            "GROUP BY FUNCTION('DAYOFWEEK', cr.consumptionDate)")
+    List<Object[]> getConsumptionByDayOfWeek(@Param("itemId") Long itemId,
+                                             @Param("startDate") LocalDate startDate,
+                                             @Param("endDate") LocalDate endDate);
+
+    /**
+     * Check if consumption data exists for an item in a date range
+     */
+    @Query("SELECT COUNT(cr) > 0 FROM ConsumptionRecord cr " +
+            "WHERE cr.item.id = :itemId " +
+            "AND cr.consumptionDate BETWEEN :startDate AND :endDate")
+    boolean existsByItemIdAndDateRange(@Param("itemId") Long itemId,
+                                       @Param("startDate") LocalDate startDate,
+                                       @Param("endDate") LocalDate endDate);
 }

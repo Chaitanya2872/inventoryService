@@ -876,7 +876,7 @@ public class AnalyticsService {
                 itemUsage.put("itemName", item.getItemName());
                 itemUsage.put("categoryName", item.getCategory().getCategoryName());
                 itemUsage.put("currentStock", item.getCurrentQuantity());
-                itemUsage.put("minStockLevel", item.getMinStockLevel());
+
 
                 // Calculate consumption rate
                 BigDecimal totalConsumption = getConsumptionForItem(item.getId(), startDate, endDate);
@@ -1093,12 +1093,9 @@ public class AnalyticsService {
         Map<String, Object> result = new HashMap<>();
 
         try {
-            List<Item> items;
-            if (categoryId != null) {
-                items = itemRepository.findByCategoryId(categoryId);
-            } else {
-                items = itemRepository.findAll();
-            }
+            List<Item> items = (categoryId != null)
+                    ? itemRepository.findByCategoryId(categoryId)
+                    : itemRepository.findAll();
 
             List<Map<String, Object>> stockLevels = new ArrayList<>();
             Map<String, LocalDate> dateRange = getActualDataRange();
@@ -1112,33 +1109,29 @@ public class AnalyticsService {
                 stockInfo.put("itemCode", item.getItemCode());
                 stockInfo.put("categoryName", item.getCategory().getCategoryName());
                 stockInfo.put("currentQuantity", item.getCurrentQuantity());
-                stockInfo.put("minStockLevel", item.getMinStockLevel());
-                stockInfo.put("maxStockLevel", item.getMaxStockLevel());
                 stockInfo.put("unitPrice", item.getUnitPrice());
                 stockInfo.put("totalValue", item.getTotalValue());
 
-                // Calculate coverage days
+                // Calculate average daily consumption
                 BigDecimal avgConsumption = safeDivide(
                         getConsumptionForItem(item.getId(), startDate, endDate),
                         BigDecimal.valueOf(ChronoUnit.DAYS.between(startDate, endDate) + 1),
                         2, RoundingMode.HALF_UP
                 );
 
-                BigDecimal coverageDays = avgConsumption.compareTo(BigDecimal.ZERO) > 0 ?
-                        safeDivide(nullSafe(item.getCurrentQuantity()), avgConsumption, 0, RoundingMode.UP) :
-                        BigDecimal.valueOf(999);
+                // Calculate coverage days
+                BigDecimal coverageDays = avgConsumption.compareTo(BigDecimal.ZERO) > 0
+                        ? safeDivide(nullSafe(item.getCurrentQuantity()), avgConsumption, 0, RoundingMode.UP)
+                        : BigDecimal.valueOf(999);
 
                 stockInfo.put("coverageDays", coverageDays.intValue());
                 stockInfo.put("avgDailyConsumption", avgConsumption);
 
-                // Determine stock alert level
+                // Determine stock alert level based on coverageDays
                 String stockAlertLevel;
-                BigDecimal currentQty = nullSafe(item.getCurrentQuantity());
-                BigDecimal minStock = nullSafe(item.getMinStockLevel());
-
-                if (currentQty.compareTo(minStock) <= 0) {
+                if (coverageDays.intValue() <= 3) {
                     stockAlertLevel = "CRITICAL";
-                } else if (currentQty.compareTo(minStock.multiply(BigDecimal.valueOf(1.5))) <= 0) {
+                } else if (coverageDays.intValue() <= 7) {
                     stockAlertLevel = "WARNING";
                 } else {
                     stockAlertLevel = "NORMAL";
@@ -1151,7 +1144,7 @@ public class AnalyticsService {
                 }
             }
 
-            // Sort the results
+            // Sorting
             Comparator<Map<String, Object>> comparator;
             switch (sortBy.toLowerCase()) {
                 case "coveragedays":
@@ -1189,6 +1182,7 @@ public class AnalyticsService {
 
         return result;
     }
+
 
     /**
      * Budget Consumption Analysis

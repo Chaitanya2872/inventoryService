@@ -3,6 +3,8 @@ package com.bmsedge.inventory.model;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import lombok.Getter;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -15,6 +17,7 @@ public class ConsumptionRecord {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Getter
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "item_id")
     @NotNull
@@ -44,6 +47,8 @@ public class ConsumptionRecord {
     @Column(name = "cost_center")
     private String costCenter;
 
+
+
     @Column(name = "employee_count")
     private Integer employeeCount;
 
@@ -60,6 +65,21 @@ public class ConsumptionRecord {
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    @Column
+    private Double dailyConsumptionMean;
+
+    @Column
+    private String volatilityClassification;
+
+    @Column
+    private Boolean isVerified = false;
+
+    @Column
+    private Double wastePercentage;
+
+    @Column
+    private Double efficiencyScore;
 
     // Constructors
     public ConsumptionRecord() {}
@@ -79,6 +99,7 @@ public class ConsumptionRecord {
         updatedAt = LocalDateTime.now();
         calculateClosingStock();
         calculateConsumptionPerCapita();
+
     }
 
     @PreUpdate
@@ -121,12 +142,30 @@ public class ConsumptionRecord {
                 ratio.compareTo(BigDecimal.valueOf(0.5)) < 0;
     }
 
+
+    public Double getDailyConsumptionMean() { return dailyConsumptionMean; }
+    public void setDailyConsumptionMean(Double dailyConsumptionMean) { this.dailyConsumptionMean = dailyConsumptionMean; }
+
+    public String getVolatilityClassification() { return volatilityClassification; }
+    public void setVolatilityClassification(String volatilityClassification) { this.volatilityClassification = volatilityClassification; }
+
+    public Boolean getIsVerified() { return isVerified; }
+    public void setIsVerified(Boolean isVerified) { this.isVerified = isVerified; }
+
+    public Double getWastePercentage() { return wastePercentage; }
+    public void setWastePercentage(Double wastePercentage) { this.wastePercentage = wastePercentage; }
+
+    public Double getEfficiencyScore() { return efficiencyScore; }
+    public void setEfficiencyScore(Double efficiencyScore) { this.efficiencyScore = efficiencyScore; }
+
+    public Item getItem() { return item; }
+    public void setItem(Item item) { this.item = item; }
+
     // Getters and Setters
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
-    public Item getItem() { return item; }
-    public void setItem(Item item) { this.item = item; }
+
 
     public LocalDate getConsumptionDate() { return consumptionDate; }
     public void setConsumptionDate(LocalDate consumptionDate) { this.consumptionDate = consumptionDate; }

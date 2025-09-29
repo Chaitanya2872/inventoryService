@@ -262,14 +262,21 @@ public class ItemController {
 
     // Helper methods
     private void validateAndFixItemRequest(ItemRequest itemRequest) {
-        // Fix zero or null values
-        if (itemRequest.getMaxStockLevel() == null || itemRequest.getMaxStockLevel() == 0) {
-            Integer currentQty = itemRequest.getCurrentQuantity();
-            itemRequest.setMaxStockLevel(currentQty != null ? Math.max(currentQty + 50, 100) : 100);
+        // Validate and fix reorder level
+        if (itemRequest.getReorderLevel() == null || itemRequest.getReorderLevel().compareTo(BigDecimal.ZERO) <= 0) {
+            BigDecimal currentQty = itemRequest.getCurrentQuantity() != null
+                    ? new BigDecimal(itemRequest.getCurrentQuantity())
+                    : BigDecimal.ZERO;
+
+            // Default reorder level: either 20% of current quantity or 10, whichever is greater
+            itemRequest.setReorderLevel(currentQty.multiply(BigDecimal.valueOf(0.2))
+                    .max(BigDecimal.TEN));
         }
 
-        if (itemRequest.getMinStockLevel() == null || itemRequest.getMinStockLevel() == 0) {
-            itemRequest.setMinStockLevel(5);
+        // Validate and fix reorder quantity
+        if (itemRequest.getReorderQuantity() == null || itemRequest.getReorderQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+            // Default reorder quantity = 50 units
+            itemRequest.setReorderQuantity(BigDecimal.valueOf(50));
         }
 
         // Validate category ID
@@ -282,11 +289,6 @@ public class ItemController {
             itemRequest.setUnitOfMeasurement("pcs");
         }
 
-        // Ensure min < max
-        if (itemRequest.getMinStockLevel() >= itemRequest.getMaxStockLevel()) {
-            itemRequest.setMaxStockLevel(itemRequest.getMinStockLevel() + 50);
-        }
-
         // Validate item name
         if (itemRequest.getItemName() == null || itemRequest.getItemName().trim().isEmpty()) {
             throw new IllegalArgumentException("Item name is required");
@@ -297,6 +299,7 @@ public class ItemController {
             throw new IllegalArgumentException("Current quantity must be a non-negative number");
         }
     }
+
 
     private Map<String, Object> createErrorResponse(String message) {
         Map<String, Object> error = new HashMap<>();

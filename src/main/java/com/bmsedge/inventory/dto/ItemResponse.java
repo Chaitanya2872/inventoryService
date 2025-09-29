@@ -3,363 +3,368 @@ package com.bmsedge.inventory.dto;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 
 public class ItemResponse {
     private Long id;
     private String itemCode;
     private String itemName;
     private String itemDescription;
+    private Integer currentQuantity;
+    private Integer openingStock;
+    private Integer closingStock;
 
-    // Stock quantities
-    private BigDecimal currentQuantity;
-    private BigDecimal openingStock;
-    private BigDecimal closingStock;
-    private BigDecimal oldStockQuantity;
+    // New fields for consumed and received stock
+    private BigDecimal totalConsumedStock;
+    private BigDecimal totalReceivedStock;
+    private BigDecimal monthConsumedStock;
+    private BigDecimal monthReceivedStock;
 
-    // Stock levels
-    private BigDecimal maxStockLevel;
-    private BigDecimal minStockLevel;
-    private BigDecimal reorderLevel;
-    private BigDecimal reorderQuantity;
+    // Reorder fields (replacing min/max)
+    private Integer reorderLevel;
+    private Integer reorderQuantity;
 
-    // Unit and pricing
+    // Statistical fields
+    private BigDecimal avgDailyConsumption;
+    private BigDecimal stdDailyConsumption;
+    private BigDecimal consumptionCV;
+    private String volatilityClassification;
+    private Boolean isHighlyVolatile;
+
     private String unitOfMeasurement;
     private BigDecimal unitPrice;
     private BigDecimal totalValue;
 
-    // Coverage and alerts
-    private BigDecimal avgDailyConsumption;
-    private Integer coverageDays;
     private String stockAlertLevel;
+    private Integer coverageDays;
     private LocalDate expectedStockoutDate;
 
-    // Bins
-    private Long primaryBinId;
-    private Long secondaryBinId;
-    private String primaryBinCode;
-    private String secondaryBinCode;
+    private Long categoryId;
+    private String categoryName;
 
-    // Dates
     private LocalDateTime expiryDate;
     private LocalDateTime lastReceivedDate;
     private LocalDateTime lastConsumptionDate;
+    private LocalDateTime lastStatisticsUpdate;
 
-    // QR Code
-    private String qrCodePath;
-    private String qrCodeData;
-
-    // Category
-    private CategoryResponse category;
-
-    // Metadata
-    private Long createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
-    // Additional computed fields
-    private boolean needsReorder;
-    private boolean isExpired;
-    private boolean isExpiringSoon;
-    private BigDecimal percentageOfStock; // Current stock as % of max
+    // Additional analytics fields
+    private String consumptionPattern;
+    private String trend;
+    private BigDecimal forecastNextPeriod;
+    private Boolean needsReorder;
+    private Boolean isCritical;
 
-    // Constructors
-    public ItemResponse() {}
-
-    // Builder pattern for cleaner construction
-    public static class Builder {
-        private ItemResponse response = new ItemResponse();
-
-        public Builder id(Long id) {
-            response.id = id;
-            return this;
-        }
-
-        public Builder itemCode(String itemCode) {
-            response.itemCode = itemCode;
-            return this;
-        }
-
-        public Builder itemName(String itemName) {
-            response.itemName = itemName;
-            return this;
-        }
-
-        public Builder itemDescription(String itemDescription) {
-            response.itemDescription = itemDescription;
-            return this;
-        }
-
-        public Builder currentQuantity(BigDecimal currentQuantity) {
-            response.currentQuantity = currentQuantity;
-            return this;
-        }
-
-        public Builder openingStock(BigDecimal openingStock) {
-            response.openingStock = openingStock;
-            return this;
-        }
-
-        public Builder closingStock(BigDecimal closingStock) {
-            response.closingStock = closingStock;
-            return this;
-        }
-
-        public Builder oldStockQuantity(BigDecimal oldStockQuantity) {
-            response.oldStockQuantity = oldStockQuantity;
-            return this;
-        }
-
-        public Builder maxStockLevel(BigDecimal maxStockLevel) {
-            response.maxStockLevel = maxStockLevel;
-            return this;
-        }
-
-        public Builder minStockLevel(BigDecimal minStockLevel) {
-            response.minStockLevel = minStockLevel;
-            return this;
-        }
-
-        public Builder reorderLevel(BigDecimal reorderLevel) {
-            response.reorderLevel = reorderLevel;
-            return this;
-        }
-
-        public Builder reorderQuantity(BigDecimal reorderQuantity) {
-            response.reorderQuantity = reorderQuantity;
-            return this;
-        }
-
-        public Builder unitOfMeasurement(String unitOfMeasurement) {
-            response.unitOfMeasurement = unitOfMeasurement;
-            return this;
-        }
-
-        public Builder unitPrice(BigDecimal unitPrice) {
-            response.unitPrice = unitPrice;
-            return this;
-        }
-
-        public Builder totalValue(BigDecimal totalValue) {
-            response.totalValue = totalValue;
-            return this;
-        }
-
-        public Builder avgDailyConsumption(BigDecimal avgDailyConsumption) {
-            response.avgDailyConsumption = avgDailyConsumption;
-            return this;
-        }
-
-        public Builder coverageDays(Integer coverageDays) {
-            response.coverageDays = coverageDays;
-            return this;
-        }
-
-        public Builder stockAlertLevel(String stockAlertLevel) {
-            response.stockAlertLevel = stockAlertLevel;
-            return this;
-        }
-
-        public Builder expectedStockoutDate(LocalDate expectedStockoutDate) {
-            response.expectedStockoutDate = expectedStockoutDate;
-            return this;
-        }
-
-        public Builder primaryBinId(Long primaryBinId) {
-            response.primaryBinId = primaryBinId;
-            return this;
-        }
-
-        public Builder secondaryBinId(Long secondaryBinId) {
-            response.secondaryBinId = secondaryBinId;
-            return this;
-        }
-
-        public Builder primaryBinCode(String primaryBinCode) {
-            response.primaryBinCode = primaryBinCode;
-            return this;
-        }
-
-        public Builder secondaryBinCode(String secondaryBinCode) {
-            response.secondaryBinCode = secondaryBinCode;
-            return this;
-        }
-
-        public Builder expiryDate(LocalDateTime expiryDate) {
-            response.expiryDate = expiryDate;
-            return this;
-        }
-
-        public Builder lastReceivedDate(LocalDateTime lastReceivedDate) {
-            response.lastReceivedDate = lastReceivedDate;
-            return this;
-        }
-
-        public Builder lastConsumptionDate(LocalDateTime lastConsumptionDate) {
-            response.lastConsumptionDate = lastConsumptionDate;
-            return this;
-        }
-
-        public Builder qrCodePath(String qrCodePath) {
-            response.qrCodePath = qrCodePath;
-            return this;
-        }
-
-        public Builder qrCodeData(String qrCodeData) {
-            response.qrCodeData = qrCodeData;
-            return this;
-        }
-
-        public Builder category(CategoryResponse category) {
-            response.category = category;
-            return this;
-        }
-
-        public Builder createdBy(Long createdBy) {
-            response.createdBy = createdBy;
-            return this;
-        }
-
-        public Builder createdAt(LocalDateTime createdAt) {
-            response.createdAt = createdAt;
-            return this;
-        }
-
-        public Builder updatedAt(LocalDateTime updatedAt) {
-            response.updatedAt = updatedAt;
-            return this;
-        }
-
-        public Builder needsReorder(boolean needsReorder) {
-            response.needsReorder = needsReorder;
-            return this;
-        }
-
-        public Builder isExpired(boolean isExpired) {
-            response.isExpired = isExpired;
-            return this;
-        }
-
-        public Builder isExpiringSoon(boolean isExpiringSoon) {
-            response.isExpiringSoon = isExpiringSoon;
-            return this;
-        }
-
-        public Builder percentageOfStock(BigDecimal percentageOfStock) {
-            response.percentageOfStock = percentageOfStock;
-            return this;
-        }
-
-        public ItemResponse build() {
-            return response;
-        }
+    // Getters and Setters
+    public Long getId() {
+        return id;
     }
 
-    // All getters and setters
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
+    public void setId(Long id) {
+        this.id = id;
+    }
 
-    public String getItemCode() { return itemCode; }
-    public void setItemCode(String itemCode) { this.itemCode = itemCode; }
+    public String getItemCode() {
+        return itemCode;
+    }
 
-    public String getItemName() { return itemName; }
-    public void setItemName(String itemName) { this.itemName = itemName; }
+    public void setItemCode(String itemCode) {
+        this.itemCode = itemCode;
+    }
 
-    public String getItemDescription() { return itemDescription; }
-    public void setItemDescription(String itemDescription) { this.itemDescription = itemDescription; }
+    public String getItemName() {
+        return itemName;
+    }
 
-    public BigDecimal getCurrentQuantity() { return currentQuantity; }
-    public void setCurrentQuantity(BigDecimal currentQuantity) { this.currentQuantity = currentQuantity; }
+    public void setItemName(String itemName) {
+        this.itemName = itemName;
+    }
 
-    public BigDecimal getOpeningStock() { return openingStock; }
-    public void setOpeningStock(BigDecimal openingStock) { this.openingStock = openingStock; }
+    public String getItemDescription() {
+        return itemDescription;
+    }
 
-    public BigDecimal getClosingStock() { return closingStock; }
-    public void setClosingStock(BigDecimal closingStock) { this.closingStock = closingStock; }
+    public void setItemDescription(String itemDescription) {
+        this.itemDescription = itemDescription;
+    }
 
-    public BigDecimal getOldStockQuantity() { return oldStockQuantity; }
-    public void setOldStockQuantity(BigDecimal oldStockQuantity) { this.oldStockQuantity = oldStockQuantity; }
+    public Integer getCurrentQuantity() {
+        return currentQuantity;
+    }
 
-    public BigDecimal getMaxStockLevel() { return maxStockLevel; }
-    public void setMaxStockLevel(BigDecimal maxStockLevel) { this.maxStockLevel = maxStockLevel; }
+    public void setCurrentQuantity(Integer currentQuantity) {
+        this.currentQuantity = currentQuantity;
+    }
 
-    public BigDecimal getMinStockLevel() { return minStockLevel; }
-    public void setMinStockLevel(BigDecimal minStockLevel) { this.minStockLevel = minStockLevel; }
+    public Integer getOpeningStock() {
+        return openingStock;
+    }
 
-    public BigDecimal getReorderLevel() { return reorderLevel; }
-    public void setReorderLevel(BigDecimal reorderLevel) { this.reorderLevel = reorderLevel; }
+    public void setOpeningStock(Integer openingStock) {
+        this.openingStock = openingStock;
+    }
 
-    public BigDecimal getReorderQuantity() { return reorderQuantity; }
-    public void setReorderQuantity(BigDecimal reorderQuantity) { this.reorderQuantity = reorderQuantity; }
+    public Integer getClosingStock() {
+        return closingStock;
+    }
 
-    public String getUnitOfMeasurement() { return unitOfMeasurement; }
-    public void setUnitOfMeasurement(String unitOfMeasurement) { this.unitOfMeasurement = unitOfMeasurement; }
+    public void setClosingStock(Integer closingStock) {
+        this.closingStock = closingStock;
+    }
 
-    public BigDecimal getUnitPrice() { return unitPrice; }
-    public void setUnitPrice(BigDecimal unitPrice) { this.unitPrice = unitPrice; }
+    public BigDecimal getTotalConsumedStock() {
+        return totalConsumedStock;
+    }
 
-    public BigDecimal getTotalValue() { return totalValue; }
-    public void setTotalValue(BigDecimal totalValue) { this.totalValue = totalValue; }
+    public void setTotalConsumedStock(BigDecimal totalConsumedStock) {
+        this.totalConsumedStock = totalConsumedStock;
+    }
 
-    public BigDecimal getAvgDailyConsumption() { return avgDailyConsumption; }
-    public void setAvgDailyConsumption(BigDecimal avgDailyConsumption) { this.avgDailyConsumption = avgDailyConsumption; }
+    public BigDecimal getTotalReceivedStock() {
+        return totalReceivedStock;
+    }
 
-    public Integer getCoverageDays() { return coverageDays; }
-    public void setCoverageDays(Integer coverageDays) { this.coverageDays = coverageDays; }
+    public void setTotalReceivedStock(BigDecimal totalReceivedStock) {
+        this.totalReceivedStock = totalReceivedStock;
+    }
 
-    public String getStockAlertLevel() { return stockAlertLevel; }
-    public void setStockAlertLevel(String stockAlertLevel) { this.stockAlertLevel = stockAlertLevel; }
+    public BigDecimal getMonthConsumedStock() {
+        return monthConsumedStock;
+    }
 
-    public LocalDate getExpectedStockoutDate() { return expectedStockoutDate; }
-    public void setExpectedStockoutDate(LocalDate expectedStockoutDate) { this.expectedStockoutDate = expectedStockoutDate; }
+    public void setMonthConsumedStock(BigDecimal monthConsumedStock) {
+        this.monthConsumedStock = monthConsumedStock;
+    }
 
-    public Long getPrimaryBinId() { return primaryBinId; }
-    public void setPrimaryBinId(Long primaryBinId) { this.primaryBinId = primaryBinId; }
+    public BigDecimal getMonthReceivedStock() {
+        return monthReceivedStock;
+    }
 
-    public Long getSecondaryBinId() { return secondaryBinId; }
-    public void setSecondaryBinId(Long secondaryBinId) { this.secondaryBinId = secondaryBinId; }
+    public void setMonthReceivedStock(BigDecimal monthReceivedStock) {
+        this.monthReceivedStock = monthReceivedStock;
+    }
 
-    public String getPrimaryBinCode() { return primaryBinCode; }
-    public void setPrimaryBinCode(String primaryBinCode) { this.primaryBinCode = primaryBinCode; }
+    public Integer getReorderLevel() {
+        return reorderLevel;
+    }
 
-    public String getSecondaryBinCode() { return secondaryBinCode; }
-    public void setSecondaryBinCode(String secondaryBinCode) { this.secondaryBinCode = secondaryBinCode; }
+    public void setReorderLevel(Integer reorderLevel) {
+        this.reorderLevel = reorderLevel;
+    }
 
-    public LocalDateTime getExpiryDate() { return expiryDate; }
-    public void setExpiryDate(LocalDateTime expiryDate) { this.expiryDate = expiryDate; }
+    public Integer getReorderQuantity() {
+        return reorderQuantity;
+    }
 
-    public LocalDateTime getLastReceivedDate() { return lastReceivedDate; }
-    public void setLastReceivedDate(LocalDateTime lastReceivedDate) { this.lastReceivedDate = lastReceivedDate; }
+    public void setReorderQuantity(Integer reorderQuantity) {
+        this.reorderQuantity = reorderQuantity;
+    }
 
-    public LocalDateTime getLastConsumptionDate() { return lastConsumptionDate; }
-    public void setLastConsumptionDate(LocalDateTime lastConsumptionDate) { this.lastConsumptionDate = lastConsumptionDate; }
+    public BigDecimal getAvgDailyConsumption() {
+        return avgDailyConsumption;
+    }
 
-    public String getQrCodePath() { return qrCodePath; }
-    public void setQrCodePath(String qrCodePath) { this.qrCodePath = qrCodePath; }
+    public void setAvgDailyConsumption(BigDecimal avgDailyConsumption) {
+        this.avgDailyConsumption = avgDailyConsumption;
+    }
 
-    public String getQrCodeData() { return qrCodeData; }
-    public void setQrCodeData(String qrCodeData) { this.qrCodeData = qrCodeData; }
+    public BigDecimal getStdDailyConsumption() {
+        return stdDailyConsumption;
+    }
 
-    public CategoryResponse getCategory() { return category; }
-    public void setCategory(CategoryResponse category) { this.category = category; }
+    public void setStdDailyConsumption(BigDecimal stdDailyConsumption) {
+        this.stdDailyConsumption = stdDailyConsumption;
+    }
 
-    public Long getCreatedBy() { return createdBy; }
-    public void setCreatedBy(Long createdBy) { this.createdBy = createdBy; }
+    public BigDecimal getConsumptionCV() {
+        return consumptionCV;
+    }
 
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public void setConsumptionCV(BigDecimal consumptionCV) {
+        this.consumptionCV = consumptionCV;
+    }
 
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public String getVolatilityClassification() {
+        return volatilityClassification;
+    }
 
-    public boolean isNeedsReorder() { return needsReorder; }
-    public void setNeedsReorder(boolean needsReorder) { this.needsReorder = needsReorder; }
+    public void setVolatilityClassification(String volatilityClassification) {
+        this.volatilityClassification = volatilityClassification;
+    }
 
-    public boolean isExpired() { return isExpired; }
-    public void setExpired(boolean expired) { isExpired = expired; }
 
-    public boolean isExpiringSoon() { return isExpiringSoon; }
-    public void setExpiringSoon(boolean expiringSoon) { isExpiringSoon = expiringSoon; }
+    // Add this field to ItemResponse.java
+    private List<Map<String, Object>> consumptionRecords;
 
-    public BigDecimal getPercentageOfStock() { return percentageOfStock; }
-    public void setPercentageOfStock(BigDecimal percentageOfStock) { this.percentageOfStock = percentageOfStock; }
+    // Add this getter and setter
+    public List<Map<String, Object>> getConsumptionRecords() {
+        return consumptionRecords;
+    }
+
+    public void setConsumptionRecords(List<Map<String, Object>> consumptionRecords) {
+        this.consumptionRecords = consumptionRecords;
+    }
+
+    public Boolean getIsHighlyVolatile() {
+        return isHighlyVolatile;
+    }
+
+    public void setIsHighlyVolatile(Boolean isHighlyVolatile) {
+        this.isHighlyVolatile = isHighlyVolatile;
+    }
+
+    public String getUnitOfMeasurement() {
+        return unitOfMeasurement;
+    }
+
+    public void setUnitOfMeasurement(String unitOfMeasurement) {
+        this.unitOfMeasurement = unitOfMeasurement;
+    }
+
+    public BigDecimal getUnitPrice() {
+        return unitPrice;
+    }
+
+    public void setUnitPrice(BigDecimal unitPrice) {
+        this.unitPrice = unitPrice;
+    }
+
+    public BigDecimal getTotalValue() {
+        return totalValue;
+    }
+
+    public void setTotalValue(BigDecimal totalValue) {
+        this.totalValue = totalValue;
+    }
+
+    public String getStockAlertLevel() {
+        return stockAlertLevel;
+    }
+
+    public void setStockAlertLevel(String stockAlertLevel) {
+        this.stockAlertLevel = stockAlertLevel;
+    }
+
+    public Integer getCoverageDays() {
+        return coverageDays;
+    }
+
+    public void setCoverageDays(Integer coverageDays) {
+        this.coverageDays = coverageDays;
+    }
+
+    public LocalDate getExpectedStockoutDate() {
+        return expectedStockoutDate;
+    }
+
+    public void setExpectedStockoutDate(LocalDate expectedStockoutDate) {
+        this.expectedStockoutDate = expectedStockoutDate;
+    }
+
+    public Long getCategoryId() {
+        return categoryId;
+    }
+
+    public void setCategoryId(Long categoryId) {
+        this.categoryId = categoryId;
+    }
+
+    public String getCategoryName() {
+        return categoryName;
+    }
+
+    public void setCategoryName(String categoryName) {
+        this.categoryName = categoryName;
+    }
+
+    public LocalDateTime getExpiryDate() {
+        return expiryDate;
+    }
+
+    public void setExpiryDate(LocalDateTime expiryDate) {
+        this.expiryDate = expiryDate;
+    }
+
+    public LocalDateTime getLastReceivedDate() {
+        return lastReceivedDate;
+    }
+
+    public void setLastReceivedDate(LocalDateTime lastReceivedDate) {
+        this.lastReceivedDate = lastReceivedDate;
+    }
+
+    public LocalDateTime getLastConsumptionDate() {
+        return lastConsumptionDate;
+    }
+
+    public void setLastConsumptionDate(LocalDateTime lastConsumptionDate) {
+        this.lastConsumptionDate = lastConsumptionDate;
+    }
+
+    public LocalDateTime getLastStatisticsUpdate() {
+        return lastStatisticsUpdate;
+    }
+
+    public void setLastStatisticsUpdate(LocalDateTime lastStatisticsUpdate) {
+        this.lastStatisticsUpdate = lastStatisticsUpdate;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
+    public String getConsumptionPattern() {
+        return consumptionPattern;
+    }
+
+    public void setConsumptionPattern(String consumptionPattern) {
+        this.consumptionPattern = consumptionPattern;
+    }
+
+    public String getTrend() {
+        return trend;
+    }
+
+    public void setTrend(String trend) {
+        this.trend = trend;
+    }
+
+    public BigDecimal getForecastNextPeriod() {
+        return forecastNextPeriod;
+    }
+
+    public void setForecastNextPeriod(BigDecimal forecastNextPeriod) {
+        this.forecastNextPeriod = forecastNextPeriod;
+    }
+
+    public Boolean getNeedsReorder() {
+        return needsReorder;
+    }
+
+    public void setNeedsReorder(Boolean needsReorder) {
+        this.needsReorder = needsReorder;
+    }
+
+    public Boolean getIsCritical() {
+        return isCritical;
+    }
+
+    public void setIsCritical(Boolean isCritical) {
+        this.isCritical = isCritical;
+    }
 }

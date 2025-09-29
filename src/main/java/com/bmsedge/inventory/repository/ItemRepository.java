@@ -17,11 +17,14 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
     List<Item> findByCreatedBy(Long createdBy);
     List<Item> findByItemNameContainingIgnoreCase(String itemName);
 
-    @Query("SELECT i FROM Item i WHERE i.currentQuantity <= i.minStockLevel")
+    // Use reorderLevel instead of removed minStockLevel
+    @Query("SELECT i FROM Item i WHERE i.currentQuantity <= i.reorderLevel")
     List<Item> findLowStockItems();
 
+    // Keep dynamic threshold version
     @Query("SELECT i FROM Item i WHERE i.currentQuantity <= :threshold")
     List<Item> findLowStockItems(@Param("threshold") Integer threshold);
+
 
     // FIXED: Changed i.description to i.itemDescription to match the actual field name
     @Query("SELECT i FROM Item i WHERE LOWER(i.itemName) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR LOWER(i.itemDescription) LIKE LOWER(CONCAT('%', :searchTerm, '%'))")
@@ -58,7 +61,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
     List<Item> findItemsUpdatedBetween(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
 
     // Additional useful queries
-    @Query("SELECT COUNT(i) FROM Item i WHERE i.currentQuantity <= i.minStockLevel")
+    @Query("SELECT COUNT(i) FROM Item i WHERE i.currentQuantity <= i.reorderLevel")
     Long countLowStockItems();
 
     @Query("SELECT COUNT(i) FROM Item i WHERE i.expiryDate <= :date")

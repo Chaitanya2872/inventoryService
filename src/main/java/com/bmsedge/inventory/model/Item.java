@@ -10,7 +10,10 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "items")
+@Table(name = "items",
+        uniqueConstraints = {
+                @UniqueConstraint(columnNames = "item_name", name = "uk_item_name")
+        })
 public class Item {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -22,7 +25,7 @@ public class Item {
 
     @NotBlank
     @Size(max = 100)
-    @Column(name = "item_name")
+    @Column(name = "item_name", unique = true) // Added unique constraint
     private String itemName;
 
     @Size(max = 500)
@@ -41,26 +44,44 @@ public class Item {
     @Column(name = "closing_stock", precision = 10, scale = 2)
     private BigDecimal closingStock = BigDecimal.ZERO;
 
-    @Min(0)
-    @Column(name = "old_stock_quantity", precision = 10, scale = 2)
-    private BigDecimal oldStockQuantity;
 
-    // Stock thresholds
-    @NotNull
-    @Min(1)
-    @Column(name = "max_stock_level", precision = 10, scale = 2)
-    private BigDecimal maxStockLevel;
 
-    @NotNull
-    @Min(0)
-    @Column(name = "min_stock_level", precision = 10, scale = 2)
-    private BigDecimal minStockLevel;
+    // NEW: Consumed and Received stock tracking
+    @Column(name = "total_consumed_stock", precision = 10, scale = 2)
+    private BigDecimal totalConsumedStock = BigDecimal.ZERO;
 
+    @Column(name = "total_received_stock", precision = 10, scale = 2)
+    private BigDecimal totalReceivedStock = BigDecimal.ZERO;
+
+    @Column(name = "month_consumed_stock", precision = 10, scale = 2)
+    private BigDecimal monthConsumedStock = BigDecimal.ZERO;
+
+    @Column(name = "month_received_stock", precision = 10, scale = 2)
+    private BigDecimal monthReceivedStock = BigDecimal.ZERO;
+
+    // REMOVED min_stock_level and max_stock_level
+    // Added reorder fields instead
     @Column(name = "reorder_level", precision = 10, scale = 2)
     private BigDecimal reorderLevel;
 
     @Column(name = "reorder_quantity", precision = 10, scale = 2)
     private BigDecimal reorderQuantity;
+
+    // Statistical fields
+    @Column(name = "avg_daily_consumption", precision = 10, scale = 4)
+    private BigDecimal avgDailyConsumption;
+
+    @Column(name = "std_daily_consumption", precision = 10, scale = 4)
+    private BigDecimal stdDailyConsumption;
+
+    @Column(name = "consumption_cv", precision = 5, scale = 4)
+    private BigDecimal consumptionCV;
+
+    @Column(name = "volatility_classification")
+    private String volatilityClassification = "MEDIUM";
+
+    @Column(name = "is_highly_volatile")
+    private Boolean isHighlyVolatile = false;
 
     // Unit and pricing
     @NotBlank
@@ -74,15 +95,15 @@ public class Item {
     @Column(name = "total_value", precision = 12, scale = 2)
     private BigDecimal totalValue;
 
-    // Coverage and alerts
-    @Column(name = "avg_daily_consumption", precision = 10, scale = 2)
-    private BigDecimal avgDailyConsumption;
 
+
+
+    // Coverage and alerts
     @Column(name = "coverage_days")
     private Integer coverageDays;
 
     @Column(name = "stock_alert_level")
-    private String stockAlertLevel = "SAFE"; // HIGH, MEDIUM, LOW, SAFE
+    private String stockAlertLevel = "SAFE"; // CRITICAL, HIGH, MEDIUM, LOW, SAFE
 
     @Column(name = "expected_stockout_date")
     private LocalDate expectedStockoutDate;
@@ -103,6 +124,9 @@ public class Item {
 
     @Column(name = "last_consumption_date")
     private LocalDateTime lastConsumptionDate;
+
+    @Column(name = "last_statistics_update")
+    private LocalDateTime lastStatisticsUpdate;
 
     @Column(name = "qr_code_path")
     private String qrCodePath;
@@ -128,15 +152,14 @@ public class Item {
 
     // Constructor for basic item creation
     public Item(String itemName, String itemDescription, BigDecimal currentQuantity,
-                BigDecimal maxStockLevel, BigDecimal minStockLevel, String unitOfMeasurement,
+                BigDecimal reorderLevel, String unitOfMeasurement,
                 LocalDateTime expiryDate, Category category, Long createdBy) {
         this.itemName = itemName;
         this.itemDescription = itemDescription;
         this.currentQuantity = currentQuantity;
         this.openingStock = currentQuantity;
         this.closingStock = currentQuantity;
-        this.maxStockLevel = maxStockLevel;
-        this.minStockLevel = minStockLevel;
+        this.reorderLevel = reorderLevel;
         this.unitOfMeasurement = unitOfMeasurement;
         this.expiryDate = expiryDate;
         this.category = category;
@@ -144,11 +167,6 @@ public class Item {
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
 
-        // Set reorder level as 2x minimum stock level by default
-        this.reorderLevel = minStockLevel.multiply(BigDecimal.valueOf(2));
-        this.reorderQuantity = maxStockLevel.subtract(minStockLevel);
-
-        // Calculate initial alert level
         updateStockAlertLevel();
     }
 
@@ -170,13 +188,20 @@ public class Item {
 
     // Business methods
     public void updateStockAlertLevel() {
-        if (currentQuantity == null || minStockLevel == null) return;
+        if (currentQuantity == null || reorderLevel == null) return;
 
-        if (currentQuantity.compareTo(minStockLevel) <= 0) {
+        BigDecimal criticalLevel = reorderLevel.multiply(BigDecimal.valueOf(0.5));
+        BigDecimal highLevel = reorderLevel.multiply(BigDecimal.valueOf(0.75));
+        BigDecimal mediumLevel = reorderLevel;
+        BigDecimal lowLevel = reorderLevel.multiply(BigDecimal.valueOf(1.5));
+
+        if (currentQuantity.compareTo(criticalLevel) <= 0) {
+            this.stockAlertLevel = "CRITICAL";
+        } else if (currentQuantity.compareTo(highLevel) <= 0) {
             this.stockAlertLevel = "HIGH";
-        } else if (reorderLevel != null && currentQuantity.compareTo(reorderLevel) <= 0) {
+        } else if (currentQuantity.compareTo(mediumLevel) <= 0) {
             this.stockAlertLevel = "MEDIUM";
-        } else if (currentQuantity.compareTo(minStockLevel.multiply(BigDecimal.valueOf(2))) <= 0) {
+        } else if (currentQuantity.compareTo(lowLevel) <= 0) {
             this.stockAlertLevel = "LOW";
         } else {
             this.stockAlertLevel = "SAFE";
@@ -194,26 +219,63 @@ public class Item {
                 avgDailyConsumption.compareTo(BigDecimal.ZERO) > 0) {
             this.coverageDays = currentQuantity.divide(avgDailyConsumption, 0, BigDecimal.ROUND_DOWN).intValue();
 
-            // Calculate expected stockout date
             if (coverageDays != null && coverageDays > 0) {
                 this.expectedStockoutDate = LocalDate.now().plusDays(coverageDays);
             }
         }
     }
 
-    // Helper method to check if item needs reorder
+    // New methods for consumption tracking
+    public void recordConsumption(BigDecimal quantity) {
+        if (quantity != null && quantity.compareTo(BigDecimal.ZERO) > 0) {
+            this.currentQuantity = this.currentQuantity.subtract(quantity);
+            this.totalConsumedStock = this.totalConsumedStock.add(quantity);
+            this.monthConsumedStock = this.monthConsumedStock.add(quantity);
+            this.lastConsumptionDate = LocalDateTime.now();
+            updateStockAlertLevel();
+        }
+    }
+
+    public void recordReceipt(BigDecimal quantity) {
+        if (quantity != null && quantity.compareTo(BigDecimal.ZERO) > 0) {
+            this.currentQuantity = this.currentQuantity.add(quantity);
+            this.totalReceivedStock = this.totalReceivedStock.add(quantity);
+            this.monthReceivedStock = this.monthReceivedStock.add(quantity);
+            this.lastReceivedDate = LocalDateTime.now();
+            updateStockAlertLevel();
+        }
+    }
+
+    public void resetMonthlyCounters() {
+        this.monthConsumedStock = BigDecimal.ZERO;
+        this.monthReceivedStock = BigDecimal.ZERO;
+    }
+
+    public void updateStatistics(BigDecimal mean, BigDecimal std, BigDecimal cv, String volatility) {
+        this.avgDailyConsumption = mean;
+        this.stdDailyConsumption = std;
+        this.consumptionCV = cv;
+        this.volatilityClassification = volatility;
+        this.isHighlyVolatile = "HIGH".equals(volatility) || "VERY_HIGH".equals(volatility);
+        this.lastStatisticsUpdate = LocalDateTime.now();
+        calculateCoverageDays();
+    }
+
+    // Helper methods
     public boolean needsReorder() {
         if (currentQuantity == null || reorderLevel == null) return false;
         return currentQuantity.compareTo(reorderLevel) <= 0;
     }
 
-    // Helper method to check if item is expired
+    public boolean isCriticalStock() {
+        return "CRITICAL".equals(stockAlertLevel) || "HIGH".equals(stockAlertLevel);
+    }
+
     public boolean isExpired() {
         if (expiryDate == null) return false;
         return expiryDate.isBefore(LocalDateTime.now());
     }
 
-    // Helper method to check if item is expiring soon (within days)
     public boolean isExpiringSoon(int days) {
         if (expiryDate == null) return false;
         return expiryDate.isBefore(LocalDateTime.now().plusDays(days));
@@ -245,23 +307,41 @@ public class Item {
     public BigDecimal getClosingStock() { return closingStock; }
     public void setClosingStock(BigDecimal closingStock) { this.closingStock = closingStock; }
 
-    public BigDecimal getOldStockQuantity() { return oldStockQuantity; }
-    public void setOldStockQuantity(BigDecimal oldStockQuantity) { this.oldStockQuantity = oldStockQuantity; }
+    public BigDecimal getTotalConsumedStock() { return totalConsumedStock; }
+    public void setTotalConsumedStock(BigDecimal totalConsumedStock) { this.totalConsumedStock = totalConsumedStock; }
 
-    public BigDecimal getMaxStockLevel() { return maxStockLevel; }
-    public void setMaxStockLevel(BigDecimal maxStockLevel) { this.maxStockLevel = maxStockLevel; }
+    public BigDecimal getTotalReceivedStock() { return totalReceivedStock; }
+    public void setTotalReceivedStock(BigDecimal totalReceivedStock) { this.totalReceivedStock = totalReceivedStock; }
 
-    public BigDecimal getMinStockLevel() { return minStockLevel; }
-    public void setMinStockLevel(BigDecimal minStockLevel) {
-        this.minStockLevel = minStockLevel;
-        updateStockAlertLevel();
-    }
+    public BigDecimal getMonthConsumedStock() { return monthConsumedStock; }
+    public void setMonthConsumedStock(BigDecimal monthConsumedStock) { this.monthConsumedStock = monthConsumedStock; }
+
+    public BigDecimal getMonthReceivedStock() { return monthReceivedStock; }
+    public void setMonthReceivedStock(BigDecimal monthReceivedStock) { this.monthReceivedStock = monthReceivedStock; }
 
     public BigDecimal getReorderLevel() { return reorderLevel; }
     public void setReorderLevel(BigDecimal reorderLevel) { this.reorderLevel = reorderLevel; }
 
     public BigDecimal getReorderQuantity() { return reorderQuantity; }
     public void setReorderQuantity(BigDecimal reorderQuantity) { this.reorderQuantity = reorderQuantity; }
+
+    public BigDecimal getAvgDailyConsumption() { return avgDailyConsumption; }
+    public void setAvgDailyConsumption(BigDecimal avgDailyConsumption) {
+        this.avgDailyConsumption = avgDailyConsumption;
+        calculateCoverageDays();
+    }
+
+    public BigDecimal getStdDailyConsumption() { return stdDailyConsumption; }
+    public void setStdDailyConsumption(BigDecimal stdDailyConsumption) { this.stdDailyConsumption = stdDailyConsumption; }
+
+    public BigDecimal getConsumptionCV() { return consumptionCV; }
+    public void setConsumptionCV(BigDecimal consumptionCV) { this.consumptionCV = consumptionCV; }
+
+    public String getVolatilityClassification() { return volatilityClassification; }
+    public void setVolatilityClassification(String volatilityClassification) { this.volatilityClassification = volatilityClassification; }
+
+    public Boolean getIsHighlyVolatile() { return isHighlyVolatile; }
+    public void setIsHighlyVolatile(Boolean isHighlyVolatile) { this.isHighlyVolatile = isHighlyVolatile; }
 
     public String getUnitOfMeasurement() { return unitOfMeasurement; }
     public void setUnitOfMeasurement(String unitOfMeasurement) { this.unitOfMeasurement = unitOfMeasurement; }
@@ -274,12 +354,6 @@ public class Item {
 
     public BigDecimal getTotalValue() { return totalValue; }
     public void setTotalValue(BigDecimal totalValue) { this.totalValue = totalValue; }
-
-    public BigDecimal getAvgDailyConsumption() { return avgDailyConsumption; }
-    public void setAvgDailyConsumption(BigDecimal avgDailyConsumption) {
-        this.avgDailyConsumption = avgDailyConsumption;
-        calculateCoverageDays();
-    }
 
     public Integer getCoverageDays() { return coverageDays; }
     public void setCoverageDays(Integer coverageDays) { this.coverageDays = coverageDays; }
@@ -304,6 +378,9 @@ public class Item {
 
     public LocalDateTime getLastConsumptionDate() { return lastConsumptionDate; }
     public void setLastConsumptionDate(LocalDateTime lastConsumptionDate) { this.lastConsumptionDate = lastConsumptionDate; }
+
+    public LocalDateTime getLastStatisticsUpdate() { return lastStatisticsUpdate; }
+    public void setLastStatisticsUpdate(LocalDateTime lastStatisticsUpdate) { this.lastStatisticsUpdate = lastStatisticsUpdate; }
 
     public String getQrCodePath() { return qrCodePath; }
     public void setQrCodePath(String qrCodePath) { this.qrCodePath = qrCodePath; }
