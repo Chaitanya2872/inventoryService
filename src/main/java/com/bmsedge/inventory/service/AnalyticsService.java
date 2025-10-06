@@ -531,6 +531,7 @@ public class AnalyticsService {
                         itemData.put("itemId", item.getId());
                         itemData.put("itemName", item.getItemName());
                         itemData.put("categoryName", item.getCategory().getCategoryName());
+
                         itemData.put("consumedQuantity", consumption.doubleValue());
                         itemData.put("totalCost", cost.doubleValue());
                         itemData.put("unitPrice", item.getUnitPrice());
@@ -596,7 +597,80 @@ public class AnalyticsService {
             List<ConsumptionRecord> records = consumptionRecordRepository
                     .findByConsumptionDateBetween(startDate, endDate);
 
-            // Group by category
+            // Build nested structure: Month -> Bin (1-15, 16-31) -> Category -> Items
+            List<Map<String, Object>> monthlyBreakdown = new ArrayList<>();
+            BigDecimal grandTotal = BigDecimal.ZERO;
+
+            // Group records by year-month
+            Map<String, List<ConsumptionRecord>> recordsByMonth = records.stream()
+                    .collect(Collectors.groupingBy(r ->
+                            r.getConsumptionDate().format(DateTimeFormatter.ofPattern("yyyy-MM"))
+                    ));
+
+            // Process each month
+            for (Map.Entry<String, List<ConsumptionRecord>> monthEntry :
+                    new TreeMap<>(recordsByMonth).entrySet()) {
+
+                String monthKey = monthEntry.getKey();
+                List<ConsumptionRecord> monthRecords = monthEntry.getValue();
+
+                Map<String, Object> monthData = new HashMap<>();
+                monthData.put("month", monthKey);
+
+                LocalDate monthDate = LocalDate.parse(monthKey + "-01");
+                monthData.put("monthName", monthDate.format(DateTimeFormatter.ofPattern("MMMM yyyy")));
+
+                // Split records into bins (1-15 and 16-31)
+                List<Map<String, Object>> bins = new ArrayList<>();
+                BigDecimal monthTotal = BigDecimal.ZERO;
+
+                // Bin 1: Days 1-15
+                Map<String, Object> bin1 = createBinBreakdown(
+                        "1-15",
+                        monthDate,
+                        monthDate.withDayOfMonth(15),
+                        monthRecords.stream()
+                                .filter(r -> r.getConsumptionDate().getDayOfMonth() <= 15)
+                                .collect(Collectors.toList())
+                );
+                bins.add(bin1);
+                monthTotal = monthTotal.add((BigDecimal) bin1.get("totalCost"));
+
+                // Bin 2: Days 16-31
+                int lastDay = monthDate.lengthOfMonth();
+                Map<String, Object> bin2 = createBinBreakdown(
+                        "16-" + lastDay,
+                        monthDate.withDayOfMonth(16),
+                        monthDate.withDayOfMonth(lastDay),
+                        monthRecords.stream()
+                                .filter(r -> r.getConsumptionDate().getDayOfMonth() > 15)
+                                .collect(Collectors.toList())
+                );
+                bins.add(bin2);
+                monthTotal = monthTotal.add((BigDecimal) bin2.get("totalCost"));
+
+                monthData.put("bins", bins);
+                monthData.put("totalCost", monthTotal);
+                monthData.put("percentage", BigDecimal.ZERO); // Will calculate later
+
+                monthlyBreakdown.add(monthData);
+                grandTotal = grandTotal.add(monthTotal);
+            }
+
+            // Calculate month percentages
+            BigDecimal finalGrandTotal = grandTotal;
+            monthlyBreakdown.forEach(month -> {
+                BigDecimal monthCost = (BigDecimal) month.get("totalCost");
+                BigDecimal percentage = safeDivide(
+                        monthCost.multiply(BigDecimal.valueOf(100)),
+                        finalGrandTotal,
+                        2,
+                        RoundingMode.HALF_UP
+                );
+                month.put("percentage", percentage);
+            });
+
+            // Also create legacy categoryDistribution for backward compatibility
             Map<Category, BigDecimal> categoryQuantity = new HashMap<>();
             Map<Category, BigDecimal> categoryCost = new HashMap<>();
 
@@ -611,8 +685,6 @@ public class AnalyticsService {
             }
 
             List<Map<String, Object>> distributionData = new ArrayList<>();
-            BigDecimal totalCost = BigDecimal.ZERO;
-
             for (Map.Entry<Category, BigDecimal> entry : categoryCost.entrySet()) {
                 Category category = entry.getKey();
                 BigDecimal cost = entry.getValue();
@@ -625,19 +697,15 @@ public class AnalyticsService {
                     categoryData.put("totalQuantity", quantity);
                     categoryData.put("totalCost", cost);
                     categoryData.put("avgUnitPrice", safeDivide(cost, quantity, 2, RoundingMode.HALF_UP));
-
+                    categoryData.put("percentage", safeDivide(
+                            cost.multiply(BigDecimal.valueOf(100)),
+                            grandTotal,
+                            2,
+                            RoundingMode.HALF_UP
+                    ));
                     distributionData.add(categoryData);
-                    totalCost = totalCost.add(cost);
                 }
             }
-
-            // Calculate percentages
-            BigDecimal finalTotalCost = totalCost;
-            distributionData.forEach(category -> {
-                BigDecimal categoryCostValue = (BigDecimal) category.get("totalCost");
-                BigDecimal percentage = safeDivide(categoryCostValue.multiply(BigDecimal.valueOf(100)), finalTotalCost, 2, RoundingMode.HALF_UP);
-                category.put("percentage", percentage);
-            });
 
             // Sort by total cost descending
             distributionData.sort((a, b) -> {
@@ -646,17 +714,134 @@ public class AnalyticsService {
                 return costB.compareTo(costA);
             });
 
-            result.put("totalCost", totalCost);
-            result.put("categoryDistribution", distributionData);
+            result.put("totalCost", grandTotal);
+            result.put("monthlyBreakdown", monthlyBreakdown);
+            result.put("categoryDistribution", distributionData); // Legacy format
+            result.put("totalMonths", monthlyBreakdown.size());
 
         } catch (Exception e) {
             System.err.println("Error in getCostDistributionByCategory: " + e.getMessage());
             e.printStackTrace();
             result.put("totalCost", BigDecimal.ZERO);
+            result.put("monthlyBreakdown", new ArrayList<>());
             result.put("categoryDistribution", new ArrayList<>());
         }
 
         return result;
+    }
+
+
+    private Map<String, Object> createBinBreakdown(String binPeriod, LocalDate binStart,
+                                                   LocalDate binEnd, List<ConsumptionRecord> binRecords) {
+        Map<String, Object> binData = new HashMap<>();
+        binData.put("binPeriod", binPeriod);
+        binData.put("startDate", binStart.toString());
+        binData.put("endDate", binEnd.toString());
+
+        // Group by category
+        Map<Category, List<ConsumptionRecord>> recordsByCategory = binRecords.stream()
+                .collect(Collectors.groupingBy(r -> r.getItem().getCategory()));
+
+        List<Map<String, Object>> categories = new ArrayList<>();
+        BigDecimal binTotal = BigDecimal.ZERO;
+
+        for (Map.Entry<Category, List<ConsumptionRecord>> categoryEntry : recordsByCategory.entrySet()) {
+            Category category = categoryEntry.getKey();
+            List<ConsumptionRecord> categoryRecords = categoryEntry.getValue();
+
+            Map<String, Object> categoryData = new HashMap<>();
+            categoryData.put("categoryId", category.getId());
+            categoryData.put("categoryName", category.getCategoryName());
+
+            // Group by item within category
+            Map<Item, List<ConsumptionRecord>> recordsByItem = categoryRecords.stream()
+                    .collect(Collectors.groupingBy(ConsumptionRecord::getItem));
+
+            List<Map<String, Object>> items = new ArrayList<>();
+            BigDecimal categoryTotal = BigDecimal.ZERO;
+            BigDecimal categoryQuantity = BigDecimal.ZERO;
+
+            for (Map.Entry<Item, List<ConsumptionRecord>> itemEntry : recordsByItem.entrySet()) {
+                Item item = itemEntry.getKey();
+                List<ConsumptionRecord> itemRecords = itemEntry.getValue();
+
+                BigDecimal itemQuantity = itemRecords.stream()
+                        .map(ConsumptionRecord::getConsumedQuantity)
+                        .filter(Objects::nonNull)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                BigDecimal unitPrice = nullSafe(item.getUnitPrice());
+                BigDecimal itemCost = itemQuantity.multiply(unitPrice);
+
+                if (itemCost.compareTo(BigDecimal.ZERO) > 0) {
+                    Map<String, Object> itemData = new HashMap<>();
+                    itemData.put("itemId", item.getId());
+                    itemData.put("itemName", item.getItemName());
+                    itemData.put("itemCode", item.getItemCode());
+                    itemData.put("quantity", itemQuantity);
+                    itemData.put("unitPrice", unitPrice);
+                    itemData.put("totalCost", itemCost);
+                    itemData.put("unitOfMeasurement", item.getUnitOfMeasurement());
+
+                    // Add detailed consumption dates for this bin
+                    List<Map<String, Object>> consumptionDetails = new ArrayList<>();
+                    for (ConsumptionRecord record : itemRecords) {
+                        Map<String, Object> detail = new HashMap<>();
+                        detail.put("date", record.getConsumptionDate().toString());
+                        detail.put("quantity", record.getConsumedQuantity());
+                        detail.put("cost", record.getConsumedQuantity().multiply(unitPrice));
+                        consumptionDetails.add(detail);
+                    }
+                    itemData.put("consumptionDetails", consumptionDetails);
+
+                    items.add(itemData);
+                    categoryTotal = categoryTotal.add(itemCost);
+                    categoryQuantity = categoryQuantity.add(itemQuantity);
+                }
+            }
+
+            // Sort items by cost descending
+            items.sort((a, b) -> {
+                BigDecimal costA = (BigDecimal) a.get("totalCost");
+                BigDecimal costB = (BigDecimal) b.get("totalCost");
+                return costB.compareTo(costA);
+            });
+
+            categoryData.put("items", items);
+            categoryData.put("totalCost", categoryTotal);
+            categoryData.put("totalQuantity", categoryQuantity);
+            categoryData.put("itemCount", items.size());
+            categoryData.put("avgUnitPrice", safeDivide(categoryTotal, categoryQuantity, 2, RoundingMode.HALF_UP));
+
+            categories.add(categoryData);
+            binTotal = binTotal.add(categoryTotal);
+        }
+
+        // Sort categories by cost descending
+        categories.sort((a, b) -> {
+            BigDecimal costA = (BigDecimal) a.get("totalCost");
+            BigDecimal costB = (BigDecimal) b.get("totalCost");
+            return costB.compareTo(costA);
+        });
+
+        // Calculate category percentages within bin
+        BigDecimal finalBinTotal = binTotal;
+        categories.forEach(category -> {
+            BigDecimal categoryCost = (BigDecimal) category.get("totalCost");
+            BigDecimal percentage = safeDivide(
+                    categoryCost.multiply(BigDecimal.valueOf(100)),
+                    finalBinTotal,
+                    2,
+                    RoundingMode.HALF_UP
+            );
+            category.put("percentage", percentage);
+        });
+
+        binData.put("categories", categories);
+        binData.put("totalCost", binTotal);
+        binData.put("categoryCount", categories.size());
+
+        return binData;
     }
 
     /**

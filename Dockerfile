@@ -1,13 +1,5 @@
-# Stage 1: Build
-FROM maven:3.9.0-eclipse-temurin-20 AS build
+FROM eclipse-temurin:17-jdk-alpine
 WORKDIR /app
-COPY pom.xml .
-COPY src ./src
-RUN mvn clean package -DskipTests
-
-# Stage 2: Run
-FROM openjdk:20-jdk-slim
-WORKDIR /app
-COPY --from=build /app/target/myapp-0.0.1-SNAPSHOT.jar app.jar
-EXPOSE 8080
-ENTRYPOINT ["java","-jar","/app.jar"]
+COPY target/inventory-service-1.0.0.jar app.jar
+EXPOSE 8082
+ENTRYPOINT ["java", "-jar", "app.jar"]
