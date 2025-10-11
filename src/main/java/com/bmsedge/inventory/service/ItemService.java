@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -40,6 +41,12 @@ public class ItemService {
     @Autowired
     private ConsumptionRecordRepository consumptionRecordRepository;
 
+    @Autowired
+    private StockReceiptRepository stockReceiptRepository;
+
+    @Autowired(required = false)
+    private BinRepository binRepository;
+
     @Autowired(required = false)
     private StatisticalAnalysisService statisticalAnalysisService;
 
@@ -54,34 +61,29 @@ public class ItemService {
      */
     public ItemResponse createItem(ItemRequest request, Long userId) {
         try {
-            // Check for duplicate item name
-            Optional<Item> existingItem = itemRepository.findAll().stream()
-                    .filter(item -> item.getItemName().equalsIgnoreCase(request.getItemName()))
-                    .findFirst();
-
-            if (existingItem.isPresent()) {
-                throw new BusinessException("Item with name '" + request.getItemName() + "' already exists");
+            // 1. Check duplicate item name + SKU
+            if (itemRepository.findByItemNameIgnoreCaseAndItemSku(request.getItemName(), request.getItemSku()).isPresent()) {
+                throw new BusinessException("Item with name '" + request.getItemName() +
+                        "' and SKU '" + request.getItemSku() + "' already exists");
             }
 
+
+
+            // 3. Get category
             Category category = categoryRepository.findById(request.getCategoryId())
                     .orElseThrow(() -> new ResourceNotFoundException("Category not found with id: " + request.getCategoryId()));
 
+            // 4. Build Item
             Item item = new Item();
-            item.setItemCode(request.getItemCode());
             item.setItemName(request.getItemName());
+            item.setItemSku(request.getItemSku());
             item.setItemDescription(request.getItemDescription());
             item.setCurrentQuantity(BigDecimal.valueOf(request.getCurrentQuantity()));
             item.setOpeningStock(BigDecimal.valueOf(request.getCurrentQuantity()));
             item.setClosingStock(BigDecimal.valueOf(request.getCurrentQuantity()));
 
-            // Use reorder level instead of min/max stock
-            BigDecimal reorderLevel = request.getReorderLevel() != null ?
-                    request.getReorderLevel() : BigDecimal.valueOf(10);
-            item.setReorderLevel(reorderLevel);
-
-            BigDecimal reorderQuantity = request.getReorderQuantity() != null ?
-                    request.getReorderQuantity() : BigDecimal.valueOf(50);
-            item.setReorderQuantity(reorderQuantity);
+            item.setReorderLevel(Optional.ofNullable(request.getReorderLevel()).orElse(BigDecimal.valueOf(10)));
+            item.setReorderQuantity(Optional.ofNullable(request.getReorderQuantity()).orElse(BigDecimal.valueOf(50)));
 
             item.setUnitOfMeasurement(request.getUnitOfMeasurement());
             item.setUnitPrice(request.getUnitPrice());
@@ -89,17 +91,21 @@ public class ItemService {
             item.setExpiryDate(request.getExpiryDate());
             item.setCreatedBy(userId);
 
+            if (request.getPrimaryBinId() != null) item.setPrimaryBinId(request.getPrimaryBinId());
+            if (request.getSecondaryBinId() != null) item.setSecondaryBinId(request.getSecondaryBinId());
+
             Item savedItem = itemRepository.save(item);
-            logger.info("Created item: {}", savedItem.getItemName());
+            logger.info("Created item: {} (SKU: {})", savedItem.getItemName(), savedItem.getItemSku());
 
             return convertToResponse(savedItem);
         } catch (DataIntegrityViolationException e) {
-            if (e.getMessage().contains("uk_item_name")) {
-                throw new BusinessException("Item with this name already exists");
+            if (e.getMessage().contains("uk_item_name_sku")) {
+                throw new BusinessException("Item with this name and SKU combination already exists");
             }
             throw e;
         }
     }
+
 
     /**
      * Get all items with pagination
@@ -110,7 +116,6 @@ public class ItemService {
         Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy));
 
         Page<Item> itemPage = itemRepository.findAll(pageable);
-
         return itemPage.map(this::convertToResponse);
     }
 
@@ -141,14 +146,16 @@ public class ItemService {
             Item item = itemRepository.findById(id)
                     .orElseThrow(() -> new ResourceNotFoundException("Item not found with id: " + id));
 
-            // Check for duplicate name (excluding current item)
+            // Check for duplicate name + SKU (excluding current item)
             Optional<Item> duplicateItem = itemRepository.findAll().stream()
                     .filter(i -> !i.getId().equals(id) &&
-                            i.getItemName().equalsIgnoreCase(request.getItemName()))
+                            i.getItemName().equalsIgnoreCase(request.getItemName()) &&
+                            Objects.equals(i.getItemSku(), request.getItemSku()))
                     .findFirst();
 
             if (duplicateItem.isPresent()) {
-                throw new BusinessException("Item with name '" + request.getItemName() + "' already exists");
+                throw new BusinessException("Item with name '" + request.getItemName() +
+                        "' and SKU '" + request.getItemSku() + "' already exists");
             }
 
             if (request.getCategoryId() != null) {
@@ -157,8 +164,9 @@ public class ItemService {
                 item.setCategory(category);
             }
 
-            item.setItemCode(request.getItemCode());
+
             item.setItemName(request.getItemName());
+            item.setItemSku(request.getItemSku());
             item.setItemDescription(request.getItemDescription());
             item.setCurrentQuantity(BigDecimal.valueOf(request.getCurrentQuantity()));
 
@@ -174,6 +182,14 @@ public class ItemService {
             item.setUnitPrice(request.getUnitPrice());
             item.setExpiryDate(request.getExpiryDate());
 
+            // Update bin locations if provided
+            if (request.getPrimaryBinId() != null) {
+                item.setPrimaryBinId(request.getPrimaryBinId());
+            }
+            if (request.getSecondaryBinId() != null) {
+                item.setSecondaryBinId(request.getSecondaryBinId());
+            }
+
             Item updatedItem = itemRepository.save(item);
 
             // Check for notifications after update
@@ -183,8 +199,8 @@ public class ItemService {
 
             return convertToResponse(updatedItem);
         } catch (DataIntegrityViolationException e) {
-            if (e.getMessage().contains("uk_item_name")) {
-                throw new BusinessException("Item with this name already exists");
+            if (e.getMessage().contains("uk_item_name_sku")) {
+                throw new BusinessException("Item with this name and SKU combination already exists");
             }
             throw e;
         }
@@ -203,6 +219,7 @@ public class ItemService {
         }
 
         // Update item stock
+        BigDecimal previousQuantity = item.getCurrentQuantity();
         item.recordConsumption(quantity);
 
         // Create stock movement
@@ -210,7 +227,7 @@ public class ItemService {
                 item, "CONSUMPTION", LocalDate.now(), quantity, userId
         );
         movement.setDepartment(department);
-        movement.setOpeningBalance(item.getCurrentQuantity().add(quantity));
+        movement.setOpeningBalance(previousQuantity);
         movement.setClosingBalance(item.getCurrentQuantity());
         stockMovementRepository.save(movement);
 
@@ -226,7 +243,7 @@ public class ItemService {
                     consumptionRecord.getConsumedQuantity() : BigDecimal.ZERO;
             consumptionRecord.setConsumedQuantity(currentConsumption.add(quantity));
         } else {
-            consumptionRecord = new ConsumptionRecord(item, today, item.getCurrentQuantity().add(quantity));
+            consumptionRecord = new ConsumptionRecord(item, today, previousQuantity);
             consumptionRecord.setConsumedQuantity(quantity);
         }
 
@@ -235,6 +252,11 @@ public class ItemService {
         consumptionRecordRepository.save(consumptionRecord);
 
         Item updatedItem = itemRepository.save(item);
+
+        // Update statistics
+        List<ConsumptionRecord> allRecords = consumptionRecordRepository.findByItem(updatedItem);
+        calculateAndUpdateStatistics(updatedItem, allRecords);
+        itemRepository.save(updatedItem);
 
         // Update statistics and correlations asynchronously
         if (statisticalAnalysisService != null) {
@@ -264,31 +286,44 @@ public class ItemService {
     }
 
     /**
-     * Record receipt - FIXED VERSION
+     * Record receipt using StockReceipt entity
      */
     @Transactional
-    public ItemResponse recordReceipt(Long itemId, BigDecimal quantity, BigDecimal unitPrice, String referenceNumber, Long userId) {
+    public ItemResponse recordReceipt(Long itemId, BigDecimal quantity, BigDecimal unitPrice,
+                                      String supplierName, String invoiceNumber,
+                                      String batchNumber, LocalDate expiryDate, Long userId) {
         Item item = itemRepository.findById(itemId)
                 .orElseThrow(() -> new ResourceNotFoundException("Item not found with id: " + itemId));
 
+        BigDecimal previousQuantity = item.getCurrentQuantity();
+
         // Update item stock
         item.recordReceipt(quantity);
-
-        if (unitPrice != null) {
+        if (unitPrice != null && unitPrice.compareTo(BigDecimal.ZERO) > 0) {
             item.setUnitPrice(unitPrice);
         }
+
+        // Create stock receipt record
+        StockReceipt receipt = new StockReceipt(item, LocalDate.now(), quantity);
+        receipt.setUnitPrice(unitPrice);
+        receipt.setSupplierName(supplierName);
+        receipt.setInvoiceNumber(invoiceNumber);
+        receipt.setBatchNumber(batchNumber);
+        receipt.setExpiryDate(expiryDate);
+        receipt.setReceivedBy(userId);
+        stockReceiptRepository.save(receipt);
 
         // Create stock movement
         StockMovement movement = new StockMovement(
                 item, "RECEIPT", LocalDate.now(), quantity, userId
         );
-        movement.setReferenceNumber(referenceNumber);
+        movement.setReferenceNumber(invoiceNumber);
         movement.setUnitPrice(unitPrice);
-        movement.setOpeningBalance(item.getCurrentQuantity().subtract(quantity));
+        movement.setOpeningBalance(previousQuantity);
         movement.setClosingBalance(item.getCurrentQuantity());
         stockMovementRepository.save(movement);
 
-        // CRITICAL FIX: Create or update consumption record with received quantity
+        // Create or update consumption record with received quantity
         LocalDate today = LocalDate.now();
         Optional<ConsumptionRecord> existingRecord = consumptionRecordRepository
                 .findByItemAndConsumptionDate(item, today);
@@ -300,7 +335,7 @@ public class ItemService {
                     consumptionRecord.getReceivedQuantity() : BigDecimal.ZERO;
             consumptionRecord.setReceivedQuantity(currentReceived.add(quantity));
         } else {
-            consumptionRecord = new ConsumptionRecord(item, today, item.getCurrentQuantity().subtract(quantity));
+            consumptionRecord = new ConsumptionRecord(item, today, previousQuantity);
             consumptionRecord.setReceivedQuantity(quantity);
         }
 
@@ -309,30 +344,44 @@ public class ItemService {
 
         Item updatedItem = itemRepository.save(item);
 
-        logger.info("Recorded receipt of {} {} for item {}", quantity, item.getUnitOfMeasurement(), item.getItemName());
+        // Update statistics
+        List<ConsumptionRecord> allRecords = consumptionRecordRepository.findByItem(updatedItem);
+        calculateAndUpdateStatistics(updatedItem, allRecords);
+        itemRepository.save(updatedItem);
+
+        logger.info("Recorded receipt of {} {} for item {} from supplier {}",
+                quantity, item.getUnitOfMeasurement(), item.getItemName(), supplierName);
 
         return convertToResponse(updatedItem);
     }
 
     /**
+     * Simplified recordReceipt for backward compatibility
+     */
+    @Transactional
+    public ItemResponse recordReceipt(Long itemId, BigDecimal quantity, BigDecimal unitPrice,
+                                      String referenceNumber, Long userId) {
+        return recordReceipt(itemId, quantity, unitPrice, null, referenceNumber, null, null, userId);
+    }
+
+    /**
      * Get items by category with pagination
      */
-    public Page<ItemResponse> getItemsByCategoryPaginated(Long categoryId, int page, int size, String sortBy, String sortDirection) {
-        Category category = categoryRepository.findById(categoryId)
+    public Page<ItemResponse> getItemsByCategoryPaginated(Long categoryId, int page, int size,
+                                                          String sortBy, String sortDirection) {
+        categoryRepository.findById(categoryId)
                 .orElseThrow(() -> new ResourceNotFoundException("Category not found with id: " + categoryId));
 
         Sort.Direction direction = sortDirection.equalsIgnoreCase("DESC") ?
                 Sort.Direction.DESC : Sort.Direction.ASC;
         Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy));
 
-        Page<Item> itemPage = itemRepository.findAll(pageable);
-        Page<Item> filteredPage = (Page<Item>) itemPage.filter(item -> item.getCategory().getId().equals(categoryId));
-
-        return filteredPage.map(this::convertToResponse);
+        Page<Item> itemPage = itemRepository.findByCategoryId(categoryId, pageable);
+        return itemPage.map(this::convertToResponse);
     }
 
     /**
-     * Get items by category (for backward compatibility)
+     * Get items by category
      */
     public List<ItemResponse> getItemsByCategory(Long categoryId) {
         categoryRepository.findById(categoryId)
@@ -403,380 +452,267 @@ public class ItemService {
     }
 
     /**
-     * Convert Item to ItemResponse - FULLY FIXED VERSION WITH ALL NULLS HANDLED
+     * Calculate and update all statistics for an item
+     */
+    private void calculateAndUpdateStatistics(Item item, List<ConsumptionRecord> records) {
+        if (records == null || records.isEmpty()) {
+            item.setAvgDailyConsumption(BigDecimal.ZERO);
+            item.setStdDailyConsumption(BigDecimal.ZERO);
+            item.setConsumptionCV(BigDecimal.ZERO);
+            item.setCoverageDays(0);
+            item.setVolatilityClassification("UNKNOWN");
+            return;
+        }
+
+        try {
+            // Filter out records with null or zero consumption
+            List<BigDecimal> consumptionValues = records.stream()
+                    .map(ConsumptionRecord::getConsumedQuantity)
+                    .filter(Objects::nonNull)
+                    .filter(val -> val.compareTo(BigDecimal.ZERO) > 0)
+                    .collect(Collectors.toList());
+
+            if (consumptionValues.isEmpty()) {
+                item.setAvgDailyConsumption(BigDecimal.ZERO);
+                item.setCoverageDays(0);
+                return;
+            }
+
+            // Calculate average daily consumption
+            BigDecimal sum = consumptionValues.stream()
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal avgConsumption = sum.divide(
+                    BigDecimal.valueOf(consumptionValues.size()),
+                    2,
+                    RoundingMode.HALF_UP
+            );
+            item.setAvgDailyConsumption(avgConsumption);
+
+            // Calculate standard deviation
+            if (consumptionValues.size() > 1) {
+                double mean = avgConsumption.doubleValue();
+                double variance = consumptionValues.stream()
+                        .mapToDouble(BigDecimal::doubleValue)
+                        .map(val -> Math.pow(val - mean, 2))
+                        .average()
+                        .orElse(0.0);
+
+                BigDecimal stdDev = BigDecimal.valueOf(Math.sqrt(variance))
+                        .setScale(2, RoundingMode.HALF_UP);
+                item.setStdDailyConsumption(stdDev);
+
+                // Calculate coefficient of variation (CV)
+                if (avgConsumption.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal cv = stdDev.divide(avgConsumption, 4, RoundingMode.HALF_UP);
+                    item.setConsumptionCV(cv);
+
+                    // Classify volatility based on CV
+                    if (cv.compareTo(BigDecimal.valueOf(0.5)) > 0) {
+                        item.setVolatilityClassification("VERY_HIGH");
+                    } else if (cv.compareTo(BigDecimal.valueOf(0.3)) > 0) {
+                        item.setVolatilityClassification("HIGH");
+                    } else if (cv.compareTo(BigDecimal.valueOf(0.15)) > 0) {
+                        item.setVolatilityClassification("MEDIUM");
+                    } else {
+                        item.setVolatilityClassification("LOW");
+                    }
+                }
+            } else {
+                item.setStdDailyConsumption(BigDecimal.ZERO);
+                item.setConsumptionCV(BigDecimal.ZERO);
+                item.setVolatilityClassification("LOW");
+            }
+
+            // Calculate coverage days
+            if (avgConsumption.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal currentQty = item.getCurrentQuantity() != null ?
+                        item.getCurrentQuantity() : BigDecimal.ZERO;
+
+                int coverageDays = currentQty.divide(avgConsumption, 0, RoundingMode.UP).intValue();
+                item.setCoverageDays(coverageDays);
+
+                if (coverageDays > 0) {
+                    item.setExpectedStockoutDate(LocalDate.now().plusDays(coverageDays));
+                }
+            } else {
+                item.setCoverageDays(0);
+                item.setExpectedStockoutDate(null);
+            }
+
+            item.setLastStatisticsUpdate(LocalDateTime.now());
+
+            logger.info("Updated statistics for item {}: avgDaily={}, coverage={} days",
+                    item.getItemName(), item.getAvgDailyConsumption(), item.getCoverageDays());
+
+        } catch (Exception e) {
+            logger.error("Error calculating statistics for item {}: {}",
+                    item.getId(), e.getMessage());
+        }
+    }
+
+    /**
+     * Convert Item to ItemResponse with complete calculations
      */
     private ItemResponse convertToResponse(Item item) {
+        // Get bin codes if bins are assigned
+        String primaryBinCode = null;
+        String secondaryBinCode = null;
+
+        if (binRepository != null) {
+            if (item.getPrimaryBinId() != null) {
+                primaryBinCode = binRepository.findById(item.getPrimaryBinId())
+                        .map(Bin::getBinCode)
+                        .orElse(null);
+            }
+            if (item.getSecondaryBinId() != null) {
+                secondaryBinCode = binRepository.findById(item.getSecondaryBinId())
+                        .map(Bin::getBinCode)
+                        .orElse(null);
+            }
+        }
+
+        // Get consumption records
+        List<ConsumptionRecord> allRecords = consumptionRecordRepository.findByItem(item);
+
+        // Calculate totals from consumption records
+        BigDecimal totalReceivedStock = allRecords.stream()
+                .map(ConsumptionRecord::getReceivedQuantity)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal totalConsumedStock = allRecords.stream()
+                .map(ConsumptionRecord::getConsumedQuantity)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // Calculate current month's stock (last 30 days)
+        LocalDate thirtyDaysAgo = LocalDate.now().minusDays(30);
+        List<ConsumptionRecord> recentRecords = allRecords.stream()
+                .filter(r -> r.getConsumptionDate() != null &&
+                        r.getConsumptionDate().isAfter(thirtyDaysAgo))
+                .collect(Collectors.toList());
+
+        BigDecimal monthReceivedStock = recentRecords.stream()
+                .map(ConsumptionRecord::getReceivedQuantity)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal monthConsumedStock = recentRecords.stream()
+                .map(ConsumptionRecord::getConsumedQuantity)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // Calculate and update statistics
+        calculateAndUpdateStatistics(item, allRecords);
+        try {
+            itemRepository.save(item);
+        } catch (Exception e) {
+            logger.error("Could not save statistics for item {}: {}", item.getId(), e.getMessage());
+        }
+
+        // Convert consumption records to response format
+        List<Map<String, Object>> consumptionRecordsData = allRecords.stream()
+                .sorted(Comparator.comparing(ConsumptionRecord::getConsumptionDate).reversed())
+                .limit(50)
+                .map(record -> {
+                    Map<String, Object> recordMap = new HashMap<>();
+                    recordMap.put("id", record.getId());
+                    recordMap.put("date", record.getConsumptionDate());
+                    recordMap.put("consumedQuantity", record.getConsumedQuantity());
+                    recordMap.put("receivedQuantity", record.getReceivedQuantity());
+                    recordMap.put("openingStock", record.getOpeningStock());
+                    recordMap.put("closingStock", record.getClosingStock());
+                    recordMap.put("department", record.getDepartment());
+                    recordMap.put("notes", record.getNotes());
+                    return recordMap;
+                })
+                .collect(Collectors.toList());
+
+        // Build response
         ItemResponse response = new ItemResponse();
         response.setId(item.getId());
-
-        // Fix itemCode - generate if null
-        response.setItemCode(item.getItemCode() != null ? item.getItemCode() :
-                "ITEM-" + item.getId());
-
         response.setItemName(item.getItemName());
+        response.setItemSku(item.getItemSku());
         response.setItemDescription(item.getItemDescription());
+
+        // Ensure stock status is always set
+        if (item.getStockStatus() == null) {
+            item.updateStockStatus();
+            try {
+                itemRepository.save(item);
+            } catch (Exception e) {
+                logger.debug("Could not update stock status for item {}", item.getId());
+            }
+        }
+
+        // Stock fields
         response.setCurrentQuantity(item.getCurrentQuantity() != null ?
                 item.getCurrentQuantity().intValue() : 0);
         response.setOpeningStock(item.getOpeningStock() != null ?
                 item.getOpeningStock().intValue() : 0);
         response.setClosingStock(item.getClosingStock() != null ?
                 item.getClosingStock().intValue() : 0);
+
+        // Calculated totals
+        response.setTotalReceivedStock(totalReceivedStock);
+        response.setTotalConsumedStock(totalConsumedStock);
+        response.setMonthReceivedStock(monthReceivedStock);
+        response.setMonthConsumedStock(monthConsumedStock);
+
+        // Reorder fields
         response.setReorderLevel(item.getReorderLevel() != null ?
                 item.getReorderLevel().intValue() : 10);
         response.setReorderQuantity(item.getReorderQuantity() != null ?
                 item.getReorderQuantity().intValue() : 50);
-        response.setUnitOfMeasurement(item.getUnitOfMeasurement() != null ?
-                item.getUnitOfMeasurement() : "pcs");
-        response.setUnitPrice(item.getUnitPrice() != null ? item.getUnitPrice() : BigDecimal.ZERO);
-        response.setTotalValue(item.getTotalValue() != null ? item.getTotalValue() : BigDecimal.ZERO);
-        response.setStockAlertLevel(item.getStockAlertLevel() != null ?
-                item.getStockAlertLevel() : "SAFE");
+
+        // Statistics fields
+        response.setAvgDailyConsumption(item.getAvgDailyConsumption());
+        response.setStdDailyConsumption(item.getStdDailyConsumption());
+        response.setConsumptionCV(item.getConsumptionCV());
+        response.setVolatilityClassification(item.getVolatilityClassification());
+        response.setIsHighlyVolatile(
+                "HIGH".equals(item.getVolatilityClassification()) ||
+                        "VERY_HIGH".equals(item.getVolatilityClassification())
+        );
+
+        // Other fields
+        response.setUnitOfMeasurement(item.getUnitOfMeasurement());
+        response.setUnitPrice(item.getUnitPrice());
+        response.setTotalValue(item.getTotalValue());
+        response.setStockAlertLevel(item.getStockAlertLevel());
+        response.setStockStatus(item.getStockStatus());
+        response.setCoverageDays(item.getCoverageDays() != null ? item.getCoverageDays() : 0);
+        response.setExpectedStockoutDate(item.getExpectedStockoutDate());
+
+        // Category
+        response.setCategoryId(item.getCategory() != null ? item.getCategory().getId() : null);
+        response.setCategoryName(item.getCategory() != null ? item.getCategory().getCategoryName() : null);
+
+        // Dates
         response.setExpiryDate(item.getExpiryDate());
+        response.setLastReceivedDate(item.getLastReceivedDate());
+        response.setLastConsumptionDate(item.getLastConsumptionDate());
+        response.setLastStatisticsUpdate(item.getLastStatisticsUpdate());
         response.setCreatedAt(item.getCreatedAt());
         response.setUpdatedAt(item.getUpdatedAt());
 
-        // Fix statistical fields with calculations and defaults
-        response.setVolatilityClassification(item.getVolatilityClassification() != null ?
-                item.getVolatilityClassification() : "MEDIUM");
-        response.setIsHighlyVolatile(item.getIsHighlyVolatile() != null ?
-                item.getIsHighlyVolatile() : false);
+        // Analytics fields
+        response.setConsumptionPattern(item.getConsumptionPattern() != null ?
+                item.getConsumptionPattern() : "UNKNOWN");
+        response.setTrend(item.getTrend() != null ? item.getTrend() : "STABLE");
+        response.setForecastNextPeriod(item.getForecastNextPeriod());
+        response.setNeedsReorder(item.needsReorder());
+        response.setIsCritical(item.getCurrentQuantity() != null &&
+                item.getReorderLevel() != null &&
+                item.getCurrentQuantity().compareTo(item.getReorderLevel()) <= 0);
 
-        // Calculate or default stock totals
-        response.setTotalReceivedStock(item.getTotalReceivedStock() != null ?
-                item.getTotalReceivedStock() : BigDecimal.ZERO);
-        response.setTotalConsumedStock(item.getTotalConsumedStock() != null ?
-                item.getTotalConsumedStock() : BigDecimal.ZERO);
+        // Consumption records
+        response.setConsumptionRecords(consumptionRecordsData);
 
-        // Calculate statistics from consumption records AND include them in response
-        List<Map<String, Object>> consumptionRecords = new ArrayList<>();
-        try {
-            LocalDate startOfMonth = LocalDate.now().withDayOfMonth(1);
-            LocalDate endOfMonth = LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth());
-            LocalDate last30Days = LocalDate.now().minusDays(30);
-
-            // Get ALL consumption records for this item (last 6 months for debugging)
-            LocalDate last6Months = LocalDate.now().minusMonths(6);
-            List<ConsumptionRecord> allRecords = consumptionRecordRepository
-                    .findByItemAndConsumptionDateBetween(item, last6Months, LocalDate.now());
-
-            logger.debug("Found {} consumption records for item {}", allRecords.size(), item.getId());
-
-            // Convert consumption records to response format
-            for (ConsumptionRecord record : allRecords) {
-                Map<String, Object> recordMap = new HashMap<>();
-                recordMap.put("id", record.getId());
-                recordMap.put("date", record.getConsumptionDate());
-                recordMap.put("openingStock", record.getOpeningStock());
-                recordMap.put("receivedQuantity", record.getReceivedQuantity());
-                recordMap.put("consumedQuantity", record.getConsumedQuantity());
-                recordMap.put("closingStock", record.getClosingStock());
-                recordMap.put("department", record.getDepartment());
-                recordMap.put("notes", record.getNotes());
-                consumptionRecords.add(recordMap);
-            }
-
-            // Calculate totals from ALL records
-            BigDecimal totalReceived = BigDecimal.ZERO;
-            BigDecimal totalConsumed = BigDecimal.ZERO;
-
-            for (ConsumptionRecord record : allRecords) {
-                if (record.getReceivedQuantity() != null) {
-                    totalReceived = totalReceived.add(record.getReceivedQuantity());
-                }
-                if (record.getConsumedQuantity() != null) {
-                    totalConsumed = totalConsumed.add(record.getConsumedQuantity());
-                }
-            }
-
-            logger.debug("Calculated totals for item {}: received={}, consumed={}",
-                    item.getId(), totalReceived, totalConsumed);
-
-            response.setTotalReceivedStock(totalReceived);
-            response.setTotalConsumedStock(totalConsumed);
-
-            // Calculate monthly totals from current month records
-            BigDecimal monthlyReceived = BigDecimal.ZERO;
-            BigDecimal monthlyConsumed = BigDecimal.ZERO;
-
-            List<ConsumptionRecord> monthRecords = allRecords.stream()
-                    .filter(r -> !r.getConsumptionDate().isBefore(startOfMonth) &&
-                            !r.getConsumptionDate().isAfter(endOfMonth))
-                    .collect(Collectors.toList());
-
-            for (ConsumptionRecord record : monthRecords) {
-                if (record.getReceivedQuantity() != null) {
-                    monthlyReceived = monthlyReceived.add(record.getReceivedQuantity());
-                }
-                if (record.getConsumedQuantity() != null) {
-                    monthlyConsumed = monthlyConsumed.add(record.getConsumedQuantity());
-                }
-            }
-
-            response.setMonthReceivedStock(monthlyReceived);
-            response.setMonthConsumedStock(monthlyConsumed);
-
-            // Calculate average daily consumption from last 30 days
-            List<ConsumptionRecord> last30DaysRecords = allRecords.stream()
-                    .filter(r -> !r.getConsumptionDate().isBefore(last30Days))
-                    .collect(Collectors.toList());
-
-            BigDecimal totalConsumption30Days = BigDecimal.ZERO;
-            int daysWithConsumption = 0;
-
-            for (ConsumptionRecord record : last30DaysRecords) {
-                if (record.getConsumedQuantity() != null && record.getConsumedQuantity().compareTo(BigDecimal.ZERO) > 0) {
-                    totalConsumption30Days = totalConsumption30Days.add(record.getConsumedQuantity());
-                    daysWithConsumption++;
-                }
-            }
-
-            BigDecimal avgDailyConsumption = BigDecimal.ZERO;
-            if (daysWithConsumption > 0) {
-                avgDailyConsumption = totalConsumption30Days.divide(
-                        BigDecimal.valueOf(daysWithConsumption), 2, BigDecimal.ROUND_HALF_UP);
-            }
-
-            response.setAvgDailyConsumption(avgDailyConsumption);
-
-            // Calculate standard deviation (simplified)
-            BigDecimal stdDev = BigDecimal.ZERO;
-            if (daysWithConsumption > 1) {
-                BigDecimal sumSquaredDiffs = BigDecimal.ZERO;
-                for (ConsumptionRecord record : last30DaysRecords) {
-                    if (record.getConsumedQuantity() != null && record.getConsumedQuantity().compareTo(BigDecimal.ZERO) > 0) {
-                        BigDecimal diff = record.getConsumedQuantity().subtract(avgDailyConsumption);
-                        sumSquaredDiffs = sumSquaredDiffs.add(diff.multiply(diff));
-                    }
-                }
-                BigDecimal variance = sumSquaredDiffs.divide(
-                        BigDecimal.valueOf(daysWithConsumption - 1), 4, BigDecimal.ROUND_HALF_UP);
-                stdDev = new BigDecimal(Math.sqrt(variance.doubleValue()));
-            }
-
-            response.setStdDailyConsumption(stdDev);
-
-            // Calculate coefficient of variation
-            BigDecimal cv = BigDecimal.ZERO;
-            if (avgDailyConsumption.compareTo(BigDecimal.ZERO) > 0) {
-                cv = stdDev.divide(avgDailyConsumption, 4, BigDecimal.ROUND_HALF_UP);
-            }
-            response.setConsumptionCV(cv);
-
-            // Calculate coverage days
-            Integer coverageDays = null;
-            if (avgDailyConsumption.compareTo(BigDecimal.ZERO) > 0 && item.getCurrentQuantity() != null) {
-                coverageDays = item.getCurrentQuantity().divide(avgDailyConsumption, 0, BigDecimal.ROUND_DOWN).intValue();
-            }
-            response.setCoverageDays(coverageDays != null ? coverageDays : 0);
-
-            // Calculate expected stockout date
-            if (coverageDays != null && coverageDays > 0) {
-                response.setExpectedStockoutDate(LocalDate.now().plusDays(coverageDays));
-            } else {
-                response.setExpectedStockoutDate(null);
-            }
-
-            // Determine consumption pattern
-            String pattern = "UNKNOWN";
-            if (daysWithConsumption > 0) {
-                double activityRate = (double) daysWithConsumption / 30.0;
-                if (activityRate > 0.8) {
-                    pattern = "REGULAR";
-                } else if (activityRate > 0.3) {
-                    pattern = "IRREGULAR";
-                } else {
-                    pattern = "SPORADIC";
-                }
-            }
-            response.setConsumptionPattern(pattern);
-
-            // Determine trend (simple approach)
-            String trend = "STABLE";
-            if (last30DaysRecords.size() >= 7) {
-                // Compare first week vs last week consumption
-                List<ConsumptionRecord> firstWeek = last30DaysRecords.stream()
-                        .filter(r -> r.getConsumptionDate().isAfter(last30Days) &&
-                                r.getConsumptionDate().isBefore(last30Days.plusDays(7)))
-                        .collect(Collectors.toList());
-                List<ConsumptionRecord> lastWeek = last30DaysRecords.stream()
-                        .filter(r -> r.getConsumptionDate().isAfter(LocalDate.now().minusDays(7)))
-                        .collect(Collectors.toList());
-
-                if (!firstWeek.isEmpty() && !lastWeek.isEmpty()) {
-                    BigDecimal firstWeekAvg = firstWeek.stream()
-                            .map(r -> r.getConsumedQuantity() != null ? r.getConsumedQuantity() : BigDecimal.ZERO)
-                            .reduce(BigDecimal.ZERO, BigDecimal::add)
-                            .divide(BigDecimal.valueOf(firstWeek.size()), 2, BigDecimal.ROUND_HALF_UP);
-
-                    BigDecimal lastWeekAvg = lastWeek.stream()
-                            .map(r -> r.getConsumedQuantity() != null ? r.getConsumedQuantity() : BigDecimal.ZERO)
-                            .reduce(BigDecimal.ZERO, BigDecimal::add)
-                            .divide(BigDecimal.valueOf(lastWeek.size()), 2, BigDecimal.ROUND_HALF_UP);
-
-                    if (lastWeekAvg.compareTo(firstWeekAvg.multiply(BigDecimal.valueOf(1.2))) > 0) {
-                        trend = "INCREASING";
-                    } else if (lastWeekAvg.compareTo(firstWeekAvg.multiply(BigDecimal.valueOf(0.8))) < 0) {
-                        trend = "DECREASING";
-                    }
-                }
-            }
-            response.setTrend(trend);
-
-            // Simple forecast for next period
-            BigDecimal forecast = avgDailyConsumption;
-            if ("INCREASING".equals(trend)) {
-                forecast = avgDailyConsumption.multiply(BigDecimal.valueOf(1.1));
-            } else if ("DECREASING".equals(trend)) {
-                forecast = avgDailyConsumption.multiply(BigDecimal.valueOf(0.9));
-            }
-            response.setForecastNextPeriod(forecast);
-
-            // Set last dates
-            if (!allRecords.isEmpty()) {
-                Optional<ConsumptionRecord> lastConsumption = allRecords.stream()
-                        .filter(r -> r.getConsumedQuantity() != null && r.getConsumedQuantity().compareTo(BigDecimal.ZERO) > 0)
-                        .max((r1, r2) -> r1.getConsumptionDate().compareTo(r2.getConsumptionDate()));
-
-                if (lastConsumption.isPresent()) {
-                    response.setLastConsumptionDate(lastConsumption.get().getConsumptionDate().atStartOfDay());
-                }
-
-                Optional<ConsumptionRecord> lastReceipt = allRecords.stream()
-                        .filter(r -> r.getReceivedQuantity() != null && r.getReceivedQuantity().compareTo(BigDecimal.ZERO) > 0)
-                        .max((r1, r2) -> r1.getConsumptionDate().compareTo(r2.getConsumptionDate()));
-
-                if (lastReceipt.isPresent()) {
-                    response.setLastReceivedDate(lastReceipt.get().getConsumptionDate().atStartOfDay());
-                }
-            }
-
-            // Set last statistics update to now if we calculated statistics
-            response.setLastStatisticsUpdate(LocalDateTime.now());
-
-        } catch (Exception e) {
-            logger.error("Error calculating statistics for item {}: {}", item.getId(), e.getMessage());
-            // Set defaults for all calculated fields
-            response.setMonthReceivedStock(BigDecimal.ZERO);
-            response.setMonthConsumedStock(BigDecimal.ZERO);
-            response.setAvgDailyConsumption(BigDecimal.ZERO);
-            response.setStdDailyConsumption(BigDecimal.ZERO);
-            response.setConsumptionCV(BigDecimal.ZERO);
-            response.setCoverageDays(0);
-            response.setExpectedStockoutDate(null);
-            response.setConsumptionPattern("UNKNOWN");
-            response.setTrend("STABLE");
-            response.setForecastNextPeriod(BigDecimal.ZERO);
-            response.setTotalReceivedStock(BigDecimal.ZERO);
-            response.setTotalConsumedStock(BigDecimal.ZERO);
-        }
-
-        // Calculate business logic fields
-        boolean needsReorder = item.getCurrentQuantity() != null && item.getReorderLevel() != null &&
-                item.getCurrentQuantity().compareTo(item.getReorderLevel()) <= 0;
-        response.setNeedsReorder(needsReorder);
-
-        boolean isCritical = "CRITICAL".equals(item.getStockAlertLevel()) ||
-                "HIGH".equals(item.getStockAlertLevel());
-        response.setIsCritical(isCritical);
-
-        if (item.getCategory() != null) {
-            response.setCategoryId(item.getCategory().getId());
-            response.setCategoryName(item.getCategory().getCategoryName());
-        }
-
-        // Set the consumption records in the response
-        response.setConsumptionRecords(consumptionRecords);
+        // Bin information
+        response.setPrimaryBinCode(primaryBinCode);
+        response.setSecondaryBinCode(secondaryBinCode);
 
         return response;
-    }
-
-    /**
-     * NEW METHOD: Bulk import from Excel data
-     */
-    @Transactional
-    public Map<String, Object> importInventoryData(List<Map<String, Object>> inventoryData, Long userId) {
-        Map<String, Object> result = new HashMap<>();
-        int imported = 0;
-        int updated = 0;
-        int failed = 0;
-        List<String> errors = new ArrayList<>();
-
-        for (Map<String, Object> row : inventoryData) {
-            try {
-                String itemName = (String) row.get("item_name");
-                String categoryName = (String) row.get("category");
-                BigDecimal openingStock = new BigDecimal(row.get("opening_stock").toString());
-                BigDecimal receivedStock = new BigDecimal(row.get("received_stock").toString());
-                BigDecimal totalConsumption = new BigDecimal(row.get("consumption").toString());
-                BigDecimal stockInHand = new BigDecimal(row.get("sih").toString());
-
-                // Find or create item
-                Optional<Item> existingItem = itemRepository.findAll().stream()
-                        .filter(item -> item.getItemName().equalsIgnoreCase(itemName))
-                        .findFirst();
-
-                Item item;
-                if (existingItem.isPresent()) {
-                    item = existingItem.get();
-                    item.setCurrentQuantity(stockInHand);
-                    item.setOpeningStock(openingStock);
-                    item.setTotalReceivedStock(item.getTotalReceivedStock().add(receivedStock));
-                    item.setTotalConsumedStock(item.getTotalConsumedStock().add(totalConsumption));
-                    updated++;
-                } else {
-                    // Create new item
-                    item = new Item();
-                    item.setItemName(itemName);
-                    item.setCurrentQuantity(stockInHand);
-                    item.setOpeningStock(openingStock);
-                    item.setTotalReceivedStock(receivedStock);
-                    item.setTotalConsumedStock(totalConsumption);
-                    item.setCreatedBy(userId);
-                    imported++;
-                }
-
-                itemRepository.save(item);
-
-                // Create consumption records if daily data exists
-                for (int day = 1; day <= 31; day++) {
-                    String dayKey = "day_" + day;
-                    if (row.containsKey(dayKey) && row.get(dayKey) != null) {
-                        BigDecimal dailyConsumption = new BigDecimal(row.get(dayKey).toString());
-                        if (dailyConsumption.compareTo(BigDecimal.ZERO) > 0) {
-                            LocalDate consumptionDate = LocalDate.now().withDayOfMonth(day);
-
-                            Optional<ConsumptionRecord> existingRecord = consumptionRecordRepository
-                                    .findByItemAndConsumptionDate(item, consumptionDate);
-
-                            ConsumptionRecord record;
-                            if (existingRecord.isPresent()) {
-                                record = existingRecord.get();
-                            } else {
-                                record = new ConsumptionRecord(item, consumptionDate, openingStock);
-                            }
-
-                            record.setConsumedQuantity(dailyConsumption);
-                            if (day == 1) {
-                                record.setReceivedQuantity(receivedStock);
-                            }
-                            consumptionRecordRepository.save(record);
-                        }
-                    }
-                }
-
-            } catch (Exception e) {
-                failed++;
-                errors.add("Row error: " + e.getMessage());
-                logger.error("Failed to import row: {}", e.getMessage());
-            }
-        }
-
-        result.put("imported", imported);
-        result.put("updated", updated);
-        result.put("failed", failed);
-        result.put("errors", errors);
-        result.put("timestamp", LocalDateTime.now());
-
-        return result;
     }
 }

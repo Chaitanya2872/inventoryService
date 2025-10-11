@@ -4,8 +4,6 @@ import com.bmsedge.inventory.dto.AnalyticsResponse;
 import com.bmsedge.inventory.model.*;
 import com.bmsedge.inventory.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -310,7 +308,10 @@ public class AnalyticsService {
         try {
             List<Item> items;
             if (categoryId != null) {
-                items = itemRepository.findByCategoryId(categoryId);
+                // FIX: Remove pageable parameter - it doesn't exist in this scope
+                items = itemRepository.findAll().stream()
+                        .filter(item -> item.getCategory() != null && item.getCategory().getId().equals(categoryId))
+                        .collect(Collectors.toList());
             } else {
                 items = itemRepository.findAll();
             }
@@ -777,7 +778,7 @@ public class AnalyticsService {
                     Map<String, Object> itemData = new HashMap<>();
                     itemData.put("itemId", item.getId());
                     itemData.put("itemName", item.getItemName());
-                    itemData.put("itemCode", item.getItemCode());
+
                     itemData.put("quantity", itemQuantity);
                     itemData.put("unitPrice", unitPrice);
                     itemData.put("totalCost", itemCost);
@@ -1045,7 +1046,10 @@ public class AnalyticsService {
         try {
             List<Item> items;
             if (categoryId != null) {
-                items = itemRepository.findByCategoryId(categoryId);
+                // FIX: Filter by category without pageable
+                items = itemRepository.findAll().stream()
+                        .filter(item -> item.getCategory() != null && item.getCategory().getId().equals(categoryId))
+                        .collect(Collectors.toList());
             } else {
                 items = itemRepository.findAll();
             }
@@ -1278,9 +1282,15 @@ public class AnalyticsService {
         Map<String, Object> result = new HashMap<>();
 
         try {
-            List<Item> items = (categoryId != null)
-                    ? itemRepository.findByCategoryId(categoryId)
-                    : itemRepository.findAll();
+            List<Item> items;
+            if (categoryId != null) {
+                // FIX: Filter by category without pageable
+                items = itemRepository.findAll().stream()
+                        .filter(item -> item.getCategory() != null && item.getCategory().getId().equals(categoryId))
+                        .collect(Collectors.toList());
+            } else {
+                items = itemRepository.findAll();
+            }
 
             List<Map<String, Object>> stockLevels = new ArrayList<>();
             Map<String, LocalDate> dateRange = getActualDataRange();
@@ -1291,7 +1301,7 @@ public class AnalyticsService {
                 Map<String, Object> stockInfo = new HashMap<>();
                 stockInfo.put("itemId", item.getId());
                 stockInfo.put("itemName", item.getItemName());
-                stockInfo.put("itemCode", item.getItemCode());
+
                 stockInfo.put("categoryName", item.getCategory().getCategoryName());
                 stockInfo.put("currentQuantity", item.getCurrentQuantity());
                 stockInfo.put("unitPrice", item.getUnitPrice());
@@ -1710,7 +1720,9 @@ public class AnalyticsService {
             // Get items for analysis
             List<Item> items;
             if (categoryId != null) {
-                items = itemRepository.findByCategoryId(categoryId);
+                items = itemRepository.findAll().stream()
+                        .filter(item -> item.getCategory() != null && item.getCategory().getId().equals(categoryId))
+                        .collect(Collectors.toList());
             } else {
                 items = itemRepository.findAll();
             }
@@ -1988,7 +2000,9 @@ public class AnalyticsService {
             // Get items for analysis
             List<Item> items;
             if (categoryId != null) {
-                items = itemRepository.findByCategoryId(categoryId);
+                items = itemRepository.findAll().stream()
+                        .filter(item -> item.getCategory() != null && item.getCategory().getId().equals(categoryId))
+                        .collect(Collectors.toList());
             } else {
                 items = itemRepository.findAll();
             }

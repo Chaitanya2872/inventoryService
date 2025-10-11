@@ -2,24 +2,30 @@ package com.bmsedge.inventory.model;
 
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
 import lombok.Getter;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+@Getter
 @Entity
 @Table(name = "consumption_records",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"item_id", "consumption_date"}))
+        uniqueConstraints = @UniqueConstraint(
+                columnNames = {"item_id", "consumption_date"}
+        ),
+        indexes = {
+                @Index(name = "idx_consumption_date", columnList = "consumption_date"),
+                @Index(name = "idx_item_date", columnList = "item_id, consumption_date")
+        })
 public class ConsumptionRecord {
+    // Getters and Setters
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Getter
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "item_id")
+    @JoinColumn(name = "item_id", nullable = false)
     @NotNull
     private Item item;
 
@@ -39,15 +45,11 @@ public class ConsumptionRecord {
     @Column(name = "closing_stock", precision = 10, scale = 2)
     private BigDecimal closingStock;
 
-    @Size(max = 100)
-    @Column(name = "department")
+    @Column(name = "department", length = 100)
     private String department;
 
-    @Size(max = 50)
-    @Column(name = "cost_center")
+    @Column(name = "cost_center", length = 50)
     private String costCenter;
-
-
 
     @Column(name = "employee_count")
     private Integer employeeCount;
@@ -55,10 +57,29 @@ public class ConsumptionRecord {
     @Column(name = "consumption_per_capita", precision = 10, scale = 4)
     private BigDecimal consumptionPerCapita;
 
-    // ADDED: Notes field for import tracking
-    @Size(max = 500)
-    @Column(name = "notes")
+    @Column(name = "notes", length = 500)
     private String notes;
+
+    @Column(name = "daily_consumption_mean")
+    private Double dailyConsumptionMean;
+
+    @Column(name = "daily_consumption_std")
+    private Double dailyConsumptionStd;
+
+    @Column(name = "daily_consumption_cv")
+    private Double dailyConsumptionCv;
+
+    @Column(name = "volatility_classification")
+    private String volatilityClassification;
+
+    @Column(name = "is_verified")
+    private Boolean isVerified = false;
+
+    @Column(name = "waste_percentage")
+    private Double wastePercentage;
+
+    @Column(name = "efficiency_score")
+    private Double efficiencyScore;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -66,29 +87,15 @@ public class ConsumptionRecord {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    @Column
-    private Double dailyConsumptionMean;
-
-    @Column
-    private String volatilityClassification;
-
-    @Column
-    private Boolean isVerified = false;
-
-    @Column
-    private Double wastePercentage;
-
-    @Column
-    private Double efficiencyScore;
-
     // Constructors
     public ConsumptionRecord() {}
 
-    public ConsumptionRecord(Item item, LocalDate consumptionDate, BigDecimal openingStock) {
+    public ConsumptionRecord(Item item, LocalDate consumptionDate,
+                             BigDecimal openingStock) {
         this.item = item;
         this.consumptionDate = consumptionDate;
         this.openingStock = openingStock;
-        this.closingStock = openingStock; // Initially same as opening
+        this.closingStock = openingStock;
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
     }
@@ -99,7 +106,6 @@ public class ConsumptionRecord {
         updatedAt = LocalDateTime.now();
         calculateClosingStock();
         calculateConsumptionPerCapita();
-
     }
 
     @PreUpdate
@@ -126,105 +132,93 @@ public class ConsumptionRecord {
     public void calculateConsumptionPerCapita() {
         if (consumedQuantity != null && employeeCount != null && employeeCount > 0) {
             this.consumptionPerCapita = consumedQuantity.divide(
-                    BigDecimal.valueOf(employeeCount), 4, BigDecimal.ROUND_HALF_UP
+                    BigDecimal.valueOf(employeeCount),
+                    4,
+                    BigDecimal.ROUND_HALF_UP
             );
         }
     }
 
-    // Helper method to check if consumption is abnormal (spike or drop)
-    public boolean isAbnormalConsumption(BigDecimal avgConsumption) {
-        if (consumedQuantity == null || avgConsumption == null ||
-                avgConsumption.compareTo(BigDecimal.ZERO) == 0) return false;
-
-        // Check if consumption is 50% above or below average
-        BigDecimal ratio = consumedQuantity.divide(avgConsumption, 2, BigDecimal.ROUND_HALF_UP);
-        return ratio.compareTo(BigDecimal.valueOf(1.5)) > 0 ||
-                ratio.compareTo(BigDecimal.valueOf(0.5)) < 0;
-    }
-
-
-    public Double getDailyConsumptionMean() { return dailyConsumptionMean; }
-    public void setDailyConsumptionMean(Double dailyConsumptionMean) { this.dailyConsumptionMean = dailyConsumptionMean; }
-
-    public String getVolatilityClassification() { return volatilityClassification; }
-    public void setVolatilityClassification(String volatilityClassification) { this.volatilityClassification = volatilityClassification; }
-
-    public Boolean getIsVerified() { return isVerified; }
-    public void setIsVerified(Boolean isVerified) { this.isVerified = isVerified; }
-
-    public Double getWastePercentage() { return wastePercentage; }
-    public void setWastePercentage(Double wastePercentage) { this.wastePercentage = wastePercentage; }
-
-    public Double getEfficiencyScore() { return efficiencyScore; }
-    public void setEfficiencyScore(Double efficiencyScore) { this.efficiencyScore = efficiencyScore; }
-
-    public Item getItem() { return item; }
-    public void setItem(Item item) { this.item = item; }
-
-    // Getters and Setters
-    public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
+    public void setItem(Item item) { this.item = item; }
 
+    public void setConsumptionDate(LocalDate consumptionDate) {
+        this.consumptionDate = consumptionDate;
+    }
 
-    public LocalDate getConsumptionDate() { return consumptionDate; }
-    public void setConsumptionDate(LocalDate consumptionDate) { this.consumptionDate = consumptionDate; }
-
-    public BigDecimal getOpeningStock() { return openingStock; }
     public void setOpeningStock(BigDecimal openingStock) {
         this.openingStock = openingStock;
         calculateClosingStock();
     }
 
-    public BigDecimal getReceivedQuantity() { return receivedQuantity; }
     public void setReceivedQuantity(BigDecimal receivedQuantity) {
         this.receivedQuantity = receivedQuantity;
         calculateClosingStock();
     }
 
-    public BigDecimal getConsumedQuantity() { return consumedQuantity; }
     public void setConsumedQuantity(BigDecimal consumedQuantity) {
         this.consumedQuantity = consumedQuantity;
         calculateClosingStock();
         calculateConsumptionPerCapita();
     }
 
-    // ADDED: Alias method for compatibility with import service
-    public void setQuantityConsumed(BigDecimal quantityConsumed) {
-        setConsumedQuantity(quantityConsumed);
+    public void setClosingStock(BigDecimal closingStock) {
+        this.closingStock = closingStock;
     }
 
-    public BigDecimal getQuantityConsumed() {
-        return getConsumedQuantity();
+    public void setDepartment(String department) {
+        this.department = department;
     }
 
-    public BigDecimal getClosingStock() { return closingStock; }
-    public void setClosingStock(BigDecimal closingStock) { this.closingStock = closingStock; }
+    public void setCostCenter(String costCenter) {
+        this.costCenter = costCenter;
+    }
 
-    public String getDepartment() { return department; }
-    public void setDepartment(String department) { this.department = department; }
-
-    public String getCostCenter() { return costCenter; }
-    public void setCostCenter(String costCenter) { this.costCenter = costCenter; }
-
-    public Integer getEmployeeCount() { return employeeCount; }
     public void setEmployeeCount(Integer employeeCount) {
         this.employeeCount = employeeCount;
         calculateConsumptionPerCapita();
     }
 
-    public BigDecimal getConsumptionPerCapita() { return consumptionPerCapita; }
     public void setConsumptionPerCapita(BigDecimal consumptionPerCapita) {
         this.consumptionPerCapita = consumptionPerCapita;
     }
 
-    // ADDED: Notes getter and setter
-    public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
 
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public void setDailyConsumptionMean(Double dailyConsumptionMean) {
+        this.dailyConsumptionMean = dailyConsumptionMean;
+    }
 
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public void setDailyConsumptionStd(Double dailyConsumptionStd) {
+        this.dailyConsumptionStd = dailyConsumptionStd;
+    }
+
+    public void setDailyConsumptionCv(Double dailyConsumptionCv) {
+        this.dailyConsumptionCv = dailyConsumptionCv;
+    }
+
+    public void setVolatilityClassification(String volatilityClassification) {
+        this.volatilityClassification = volatilityClassification;
+    }
+
+    public void setIsVerified(Boolean isVerified) {
+        this.isVerified = isVerified;
+    }
+
+    public void setWastePercentage(Double wastePercentage) {
+        this.wastePercentage = wastePercentage;
+    }
+
+    public void setEfficiencyScore(Double efficiencyScore) {
+        this.efficiencyScore = efficiencyScore;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
 }

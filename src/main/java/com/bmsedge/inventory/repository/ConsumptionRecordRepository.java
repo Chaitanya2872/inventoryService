@@ -273,4 +273,6 @@ public interface ConsumptionRecordRepository extends JpaRepository<ConsumptionRe
     boolean existsByItemIdAndDateRange(@Param("itemId") Long itemId,
                                        @Param("startDate") LocalDate startDate,
                                        @Param("endDate") LocalDate endDate);
+
+    List<ConsumptionRecord> findByItem(Item item);
 }

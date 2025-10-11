@@ -193,7 +193,9 @@ public class AnalyticsController {
             List<Item> items;
 
             if (categoryId != null) {
-                items = itemRepository.findByCategoryId(categoryId);
+                items = itemRepository.findAll().stream()
+                        .filter(item -> item.getCategory() != null && item.getCategory().getId().equals(categoryId))
+                        .collect(Collectors.toList());
             } else {
                 items = itemRepository.findAll();
             }
@@ -204,7 +206,7 @@ public class AnalyticsController {
                 items = items.stream()
                         .filter(item ->
                                 item.getItemName().toLowerCase().contains(lowerQuery) ||
-                                        (item.getItemCode() != null && item.getItemCode().toLowerCase().contains(lowerQuery)))
+                                        (item.getItemName() != null && item.getItemName().toLowerCase().contains(lowerQuery)))
                         .collect(Collectors.toList());
             }
 
@@ -214,7 +216,6 @@ public class AnalyticsController {
                         Map<String, Object> result = new HashMap<>();
                         result.put("id", item.getId());
                         result.put("itemName", item.getItemName());
-                        result.put("itemCode", item.getItemCode());
                         result.put("categoryName", item.getCategory().getCategoryName());
                         result.put("currentQuantity", item.getCurrentQuantity());
                         result.put("unitPrice", item.getUnitPrice());

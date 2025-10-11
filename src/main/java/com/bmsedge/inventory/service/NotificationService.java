@@ -109,18 +109,7 @@ public class NotificationService {
         }
 
         // 4. Expiry Alert
-        if (item.isExpiringSoon(7)) {
-            Notification notification = createNotification(
-                    item,
-                    NotificationType.EXPIRY_WARNING,
-                    "Item expiring soon",
-                    String.format("Item '%s' will expire on %s. Current stock: %.2f",
-                            item.getItemName(),
-                            item.getExpiryDate(),
-                            item.getCurrentQuantity())
-            );
-            itemNotifications.add(notification);
-        }
+
 
         // 5. Stock Out Prediction
         if (item.getExpectedStockoutDate() != null &&

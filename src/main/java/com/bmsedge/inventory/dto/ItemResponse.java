@@ -10,6 +10,7 @@ public class ItemResponse {
     private Long id;
     private String itemCode;
     private String itemName;
+    private String itemSku;  // NEW: SKU for item variants
     private String itemDescription;
     private Integer currentQuantity;
     private Integer openingStock;
@@ -36,12 +37,17 @@ public class ItemResponse {
     private BigDecimal unitPrice;
     private BigDecimal totalValue;
 
-    private String stockAlertLevel;
+    private String stockAlertLevel;  // SAFE, MEDIUM, HIGH, CRITICAL
+    private String stockStatus;      // NEW: IN_STOCK, LOW_STOCK, OUT_OF_STOCK, CRITICAL
     private Integer coverageDays;
     private LocalDate expectedStockoutDate;
 
     private Long categoryId;
     private String categoryName;
+
+    // Bin location fields
+    private String primaryBinCode;    // NEW: Primary bin location code
+    private String secondaryBinCode;  // NEW: Secondary bin location code
 
     private LocalDateTime expiryDate;
     private LocalDateTime lastReceivedDate;
@@ -58,7 +64,11 @@ public class ItemResponse {
     private Boolean needsReorder;
     private Boolean isCritical;
 
+    // Consumption records
+    private List<Map<String, Object>> consumptionRecords;
+
     // Getters and Setters
+
     public Long getId() {
         return id;
     }
@@ -81,6 +91,14 @@ public class ItemResponse {
 
     public void setItemName(String itemName) {
         this.itemName = itemName;
+    }
+
+    public String getItemSku() {
+        return itemSku;
+    }
+
+    public void setItemSku(String itemSku) {
+        this.itemSku = itemSku;
     }
 
     public String getItemDescription() {
@@ -195,19 +213,6 @@ public class ItemResponse {
         this.volatilityClassification = volatilityClassification;
     }
 
-
-    // Add this field to ItemResponse.java
-    private List<Map<String, Object>> consumptionRecords;
-
-    // Add this getter and setter
-    public List<Map<String, Object>> getConsumptionRecords() {
-        return consumptionRecords;
-    }
-
-    public void setConsumptionRecords(List<Map<String, Object>> consumptionRecords) {
-        this.consumptionRecords = consumptionRecords;
-    }
-
     public Boolean getIsHighlyVolatile() {
         return isHighlyVolatile;
     }
@@ -248,6 +253,14 @@ public class ItemResponse {
         this.stockAlertLevel = stockAlertLevel;
     }
 
+    public String getStockStatus() {
+        return stockStatus;
+    }
+
+    public void setStockStatus(String stockStatus) {
+        this.stockStatus = stockStatus;
+    }
+
     public Integer getCoverageDays() {
         return coverageDays;
     }
@@ -278,6 +291,22 @@ public class ItemResponse {
 
     public void setCategoryName(String categoryName) {
         this.categoryName = categoryName;
+    }
+
+    public String getPrimaryBinCode() {
+        return primaryBinCode;
+    }
+
+    public void setPrimaryBinCode(String primaryBinCode) {
+        this.primaryBinCode = primaryBinCode;
+    }
+
+    public String getSecondaryBinCode() {
+        return secondaryBinCode;
+    }
+
+    public void setSecondaryBinCode(String secondaryBinCode) {
+        this.secondaryBinCode = secondaryBinCode;
     }
 
     public LocalDateTime getExpiryDate() {
@@ -366,5 +395,82 @@ public class ItemResponse {
 
     public void setIsCritical(Boolean isCritical) {
         this.isCritical = isCritical;
+    }
+
+    public List<Map<String, Object>> getConsumptionRecords() {
+        return consumptionRecords;
+    }
+
+    public void setConsumptionRecords(List<Map<String, Object>> consumptionRecords) {
+        this.consumptionRecords = consumptionRecords;
+    }
+
+    /**
+     * Get full display name with SKU
+     * Example: "Pril-Dishwash (125ml)"
+     */
+    public String getFullDisplayName() {
+        if (itemSku != null && !itemSku.isEmpty()) {
+            return itemName + " (" + itemSku + ")";
+        }
+        return itemName;
+    }
+
+    /**
+     * Check if item is out of stock
+     */
+    public boolean isOutOfStock() {
+        return currentQuantity != null && currentQuantity <= 0;
+    }
+
+    /**
+     * Check if item is low on stock (below reorder level)
+     */
+    public boolean isLowStock() {
+        return currentQuantity != null && reorderLevel != null &&
+                currentQuantity <= reorderLevel;
+    }
+
+    public static class Builder {
+        private ItemResponse response = new ItemResponse();
+
+        public Builder id(Long id) {
+            response.setId(id);
+            return this;
+        }
+
+        public Builder itemCode(String itemCode) {
+            response.setItemCode(itemCode);
+            return this;
+        }
+
+        public Builder itemName(String itemName) {
+            response.setItemName(itemName);
+            return this;
+        }
+
+        public Builder itemSku(String itemSku) {
+            response.setItemSku(itemSku);
+            return this;
+        }
+
+        public Builder currentQuantity(Integer currentQuantity) {
+            response.setCurrentQuantity(currentQuantity);
+            return this;
+        }
+
+        public Builder categoryName(String categoryName) {
+            response.setCategoryName(categoryName);
+            return this;
+        }
+
+        public Builder stockStatus(String stockStatus) {
+            response.setStockStatus(stockStatus);
+            return this;
+        }
+
+        public ItemResponse build() {
+            return response;
+        }
     }
 }
