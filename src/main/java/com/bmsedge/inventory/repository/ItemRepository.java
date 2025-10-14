@@ -189,7 +189,7 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
 
 
 
-    Optional<Object> findByItemNameIgnoreCaseAndItemSku(@NotBlank(message = "Item name is required") @Size(max = 100, message = "Item name must not exceed 100 characters") String itemName, @Size(max = 100, message = "Item SKU must not exceed 100 characters") String itemSku);
+    Optional<Item> findByItemNameIgnoreCaseAndItemSku(@NotBlank(message = "Item name is required") @Size(max = 100, message = "Item name must not exceed 100 characters") String itemName, @Size(max = 100, message = "Item SKU must not exceed 100 characters") String itemSku);
 
     Optional<Item> findByItemNameIgnoreCaseAndItemSkuIsNull(@NotBlank(message = "Item name is required") @Size(max = 100, message = "Item name must not exceed 100 characters") String itemName);
 }

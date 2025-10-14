@@ -62,11 +62,13 @@ public class ItemService {
     public ItemResponse createItem(ItemRequest request, Long userId) {
         try {
             // 1. Check duplicate item name + SKU (handle null SKU)
-            Optional<Object> existingItem;
-            if (request.getItemSku() != null) {
-                existingItem = itemRepository.findByItemNameIgnoreCaseAndItemSku(request.getItemName(), request.getItemSku());
+            Optional<Item> existingItem;
+            if (request.getItemSku() != null && !request.getItemSku().trim().isEmpty()) {
+                existingItem = itemRepository.findByItemNameIgnoreCaseAndItemSku(
+                        request.getItemName(), request.getItemSku());
             } else {
-                existingItem = Optional.ofNullable(itemRepository.findByItemNameIgnoreCaseAndItemSkuIsNull(request.getItemName()));
+                existingItem = itemRepository.findByItemNameIgnoreCaseAndItemSkuIsNull(
+                        request.getItemName());
             }
 
             if (existingItem.isPresent()) {

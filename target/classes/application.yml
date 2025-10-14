@@ -6,9 +6,9 @@ spring:
     name: inventory-service  # This should match your service name
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/inventoryservice_db
-    username: postgres
-    password: postgres # Replace with your actual password
+    url: jdbc:postgresql://dpg-d3m9lk95pdvs73b2mtd0-a.singapore-postgres.render.com:5432/bms_inv
+    username: tester4723
+    password: UAYWY4J4c05TGlmBrmet50TV6oxUZQ1a # Replace with your actual password
     driver-class-name: org.postgresql.Driver
 
   jpa:

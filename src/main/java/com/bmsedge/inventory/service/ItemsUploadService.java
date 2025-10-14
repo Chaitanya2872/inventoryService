@@ -6,6 +6,8 @@ import com.bmsedge.inventory.dto.ItemResponse;
 import com.bmsedge.inventory.exception.BusinessException;
 import com.bmsedge.inventory.model.Category;
 import com.bmsedge.inventory.repository.CategoryRepository;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.slf4j.Logger;
@@ -14,7 +16,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-
+import com.bmsedge.inventory.model.Item;
+import com.bmsedge.inventory.repository.ItemRepository;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.*;
@@ -28,6 +31,9 @@ public class ItemsUploadService {
 
     @Autowired
     private ItemService itemService;
+
+    @Autowired
+    private ItemRepository itemRepository;
 
     @Autowired
     private CategoryService categoryService;
@@ -73,6 +79,7 @@ public class ItemsUploadService {
 
         // Create items - each item creation is in its own transaction
         List<ItemResponse> createdItems = new ArrayList<>();
+        List<ItemResponse> updatedItems = new ArrayList<>();
         List<String> creationErrors = new ArrayList<>();
 
         for (int i = 0; i < itemRequests.size(); i++) {
@@ -80,10 +87,20 @@ public class ItemsUploadService {
                 ItemRequest itemRequest = itemRequests.get(i);
                 validateAndFixItemRequest(itemRequest);
 
-                // This method has @Transactional, so each item gets its own transaction
-                ItemResponse itemResponse = itemService.createItem(itemRequest, userId);
-                createdItems.add(itemResponse);
+                // Check if item exists (by name + SKU)
+                Item existingItem = findExistingItem(itemRequest.getItemName(), itemRequest.getItemSku());
 
+                if (existingItem != null) {
+                    // UPDATE existing item
+                    ItemResponse updated = updateExistingItem(existingItem, itemRequest, userId);
+                    updatedItems.add(updated);
+                    logger.info("Updated item: {} ({})", itemRequest.getItemName(), itemRequest.getItemSku());
+                } else {
+                    // CREATE new item
+                    ItemResponse created = itemService.createItem(itemRequest, userId);
+                    createdItems.add(created);
+                    logger.info("Created item: {} ({})", itemRequest.getItemName(), itemRequest.getItemSku());
+                }
             } catch (Exception e) {
                 String errorMsg = String.format("Row %d (%s %s): %s",
                         i + 2,
@@ -95,20 +112,119 @@ public class ItemsUploadService {
             }
         }
 
-        result.put("success", !createdItems.isEmpty());
+
+        result.put("success", !createdItems.isEmpty() || !updatedItems.isEmpty());
         result.put("itemsCreated", createdItems.size());
+        result.put("itemsUpdated", updatedItems.size());
+        result.put("totalProcessed", createdItems.size() + updatedItems.size());
         result.put("items", createdItems);
+        result.put("updatedItems", updatedItems);
         result.put("creationErrors", creationErrors);
 
-        if (!createdItems.isEmpty()) {
+        if (!createdItems.isEmpty() || !updatedItems.isEmpty()) {
             result.put("message", String.format(
-                    "Successfully created %d out of %d items",
-                    createdItems.size(), itemRequests.size()));
+                    "Successfully processed %d items (created: %d, updated: %d)",
+                    createdItems.size() + updatedItems.size(),
+                    createdItems.size(),
+                    updatedItems.size()));
         } else {
-            result.put("message", "Failed to create any items. Check errors for details.");
+            result.put("message", "Failed to process any items. Check errors for details.");
         }
 
         return result;
+    }
+
+    private ItemResponse updateExistingItem(Item existingItem, ItemRequest request, Long userId) {
+        // Update description
+        if (request.getItemDescription() != null) {
+            existingItem.setItemDescription(request.getItemDescription());
+        }
+
+        // Update current quantity (always update from Excel)
+        existingItem.setCurrentQuantity(java.math.BigDecimal.valueOf(request.getCurrentQuantity()));
+
+        // Update optional fields if provided in Excel
+        if (request.getUnitPrice() != null) {
+            existingItem.setUnitPrice(request.getUnitPrice());
+        }
+
+        if (request.getReorderLevel() != null) {
+            existingItem.setReorderLevel(request.getReorderLevel());
+        }
+
+        if (request.getReorderQuantity() != null) {
+            existingItem.setReorderQuantity(request.getReorderQuantity());
+        }
+
+        if (request.getUnitOfMeasurement() != null && !request.getUnitOfMeasurement().trim().isEmpty()) {
+            existingItem.setUnitOfMeasurement(request.getUnitOfMeasurement());
+        }
+
+        if (request.getExpiryDate() != null) {
+            existingItem.setExpiryDate(request.getExpiryDate());
+        }
+
+        if (request.getPrimaryBinId() != null) {
+            existingItem.setPrimaryBinId(request.getPrimaryBinId());
+        }
+
+        if (request.getSecondaryBinId() != null) {
+            existingItem.setSecondaryBinId(request.getSecondaryBinId());
+        }
+
+        // Update stock status (automatic calculation)
+        existingItem.updateStockStatus();
+
+        // Save to database
+        Item updatedItem = itemRepository.save(existingItem);
+
+        logger.info("Updated item ID {}: {} - New quantity: {}",
+                updatedItem.getId(), updatedItem.getItemName(), updatedItem.getCurrentQuantity());
+
+        // Return as ItemResponse using existing service method
+        return itemService.getItemById(updatedItem.getId());
+    }
+
+
+    private Item findExistingItem(String itemName, String itemSku) {
+        try {
+            // Trim and clean the item name
+            String cleanedName = itemName != null ? itemName.trim() : null;
+            String cleanedSku = itemSku != null ? itemSku.trim() : null;
+
+            // Make SKU null if it's empty string
+            if (cleanedSku != null && cleanedSku.isEmpty()) {
+                cleanedSku = null;
+            }
+
+            Optional<Item> itemOpt;
+
+            if (cleanedSku != null) {
+                // Search by name + SKU (case-insensitive)
+                logger.debug("Searching for existing item: name='{}', sku='{}'", cleanedName, cleanedSku);
+                itemOpt = itemRepository.findByItemNameIgnoreCaseAndItemSku(cleanedName, cleanedSku);
+            } else {
+                // Search by name + null SKU
+                logger.debug("Searching for existing item: name='{}', sku=null", cleanedName);
+                itemOpt = itemRepository.findByItemNameIgnoreCaseAndItemSkuIsNull(cleanedName);
+            }
+
+            if (itemOpt.isPresent()) {
+                logger.debug("Found existing item: ID={}, name='{}', sku='{}'",
+                        itemOpt.get().getId(), itemOpt.get().getItemName(), itemOpt.get().getItemSku());
+            } else {
+                logger.debug("No existing item found for: name='{}', sku='{}'", cleanedName, cleanedSku);
+            }
+
+            return itemOpt.orElse(null);
+
+        } catch (Exception e) {
+            logger.error("Error finding existing item '{}' with SKU '{}': {}",
+                    itemName, itemSku, e.getMessage(), e);
+            // Re-throw the exception instead of returning null
+            // This will be caught by the outer try-catch in uploadItemsFromFile
+            throw new RuntimeException("Failed to check for existing item: " + e.getMessage(), e);
+        }
     }
 
     /**
