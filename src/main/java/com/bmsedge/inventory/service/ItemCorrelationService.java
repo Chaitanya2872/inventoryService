@@ -131,7 +131,7 @@ public class ItemCorrelationService {
 
         List<Item> otherItems = itemRepository.findAll().stream()
                 .filter(item -> !item.getId().equals(itemId))
-                .collect(Collectors.toList());
+                .toList();
 
         List<Map<String, Object>> correlations = new ArrayList<>();
 
@@ -157,7 +157,7 @@ public class ItemCorrelationService {
                     correlations.add(corrData);
                 }
             } catch (Exception e) {
-                logger.error("Error calculating correlation between {} and {}: {}",
+                logger.error("Error calci correlation between {} and {}: {}",
                         targetItem.getItemName(), otherItem.getItemName(), e.getMessage());
             }
         }

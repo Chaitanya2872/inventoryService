@@ -61,19 +61,24 @@ public class ItemService {
      */
     public ItemResponse createItem(ItemRequest request, Long userId) {
         try {
-            // 1. Check duplicate item name + SKU
-            if (itemRepository.findByItemNameIgnoreCaseAndItemSku(request.getItemName(), request.getItemSku()).isPresent()) {
+            // 1. Check duplicate item name + SKU (handle null SKU)
+            Optional<Object> existingItem;
+            if (request.getItemSku() != null) {
+                existingItem = itemRepository.findByItemNameIgnoreCaseAndItemSku(request.getItemName(), request.getItemSku());
+            } else {
+                existingItem = Optional.ofNullable(itemRepository.findByItemNameIgnoreCaseAndItemSkuIsNull(request.getItemName()));
+            }
+
+            if (existingItem.isPresent()) {
                 throw new BusinessException("Item with name '" + request.getItemName() +
                         "' and SKU '" + request.getItemSku() + "' already exists");
             }
 
-
-
-            // 3. Get category
+            // 2. Get category
             Category category = categoryRepository.findById(request.getCategoryId())
                     .orElseThrow(() -> new ResourceNotFoundException("Category not found with id: " + request.getCategoryId()));
 
-            // 4. Build Item
+            // 3. Build Item
             Item item = new Item();
             item.setItemName(request.getItemName());
             item.setItemSku(request.getItemSku());
@@ -81,23 +86,24 @@ public class ItemService {
             item.setCurrentQuantity(BigDecimal.valueOf(request.getCurrentQuantity()));
             item.setOpeningStock(BigDecimal.valueOf(request.getCurrentQuantity()));
             item.setClosingStock(BigDecimal.valueOf(request.getCurrentQuantity()));
-
             item.setReorderLevel(Optional.ofNullable(request.getReorderLevel()).orElse(BigDecimal.valueOf(10)));
             item.setReorderQuantity(Optional.ofNullable(request.getReorderQuantity()).orElse(BigDecimal.valueOf(50)));
-
             item.setUnitOfMeasurement(request.getUnitOfMeasurement());
             item.setUnitPrice(request.getUnitPrice());
             item.setCategory(category);
             item.setExpiryDate(request.getExpiryDate());
             item.setCreatedBy(userId);
-
             if (request.getPrimaryBinId() != null) item.setPrimaryBinId(request.getPrimaryBinId());
             if (request.getSecondaryBinId() != null) item.setSecondaryBinId(request.getSecondaryBinId());
+
+            // 4. Update stock status
+            item.updateStockStatus();
 
             Item savedItem = itemRepository.save(item);
             logger.info("Created item: {} (SKU: {})", savedItem.getItemName(), savedItem.getItemSku());
 
             return convertToResponse(savedItem);
+
         } catch (DataIntegrityViolationException e) {
             if (e.getMessage().contains("uk_item_name_sku")) {
                 throw new BusinessException("Item with this name and SKU combination already exists");
@@ -105,6 +111,7 @@ public class ItemService {
             throw e;
         }
     }
+
 
 
     /**
