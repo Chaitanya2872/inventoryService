@@ -10,10 +10,13 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.HashMap;
 import java.util.Map;
 
 /**
+ * IMPROVED VERSION with better error handling
  * REST Controller for bulk items import from Excel files
  * Supports flexible Excel formats with automatic SKU detection
  */
@@ -28,44 +31,172 @@ public class ItemsUploadController {
     private ItemsUploadService itemsUploadService;
 
     /**
-     * Bulk import items from Excel file
+     * IMPROVED: Bulk import items from Excel file with detailed error reporting
      * POST /api/upload/items
-     *
-     * Features:
-     * - Auto-detects Excel structure (any column arrangement)
-     * - Supports item SKU variants (125ml, 500ml, etc.)
-     * - Multiple sheets support
-     * - Auto-creates missing categories
-     * - Different SKUs = Different items
      */
     @PostMapping("/items")
     public ResponseEntity<Map<String, Object>> uploadItems(
             @RequestParam("file") MultipartFile file,
             @RequestHeader(value = "X-User-Id", required = false, defaultValue = "1") Long userId) {
 
-        logger.info("Received items upload request: file={}, size={}KB",
-                file.getOriginalFilename(), file.getSize() / 1024);
+        logger.info("================================================");
+        logger.info("UPLOAD REQUEST RECEIVED");
+        logger.info("File: {}", file.getOriginalFilename());
+        logger.info("Size: {} KB", file.getSize() / 1024);
+        logger.info("Content Type: {}", file.getContentType());
+        logger.info("User ID: {}", userId);
+        logger.info("================================================");
+
+        // Validate file first
+        if (file.isEmpty()) {
+            logger.error("File is empty");
+            return createErrorResponse("File is empty", "EMPTY_FILE", HttpStatus.BAD_REQUEST);
+        }
+
+        if (file.getOriginalFilename() == null) {
+            logger.error("File name is null");
+            return createErrorResponse("File name is missing", "NULL_FILENAME", HttpStatus.BAD_REQUEST);
+        }
+
+        String fileName = file.getOriginalFilename().toLowerCase();
+        if (!fileName.endsWith(".xlsx") && !fileName.endsWith(".xls")) {
+            logger.error("Invalid file format: {}", fileName);
+            return createErrorResponse(
+                    "Only Excel files (.xlsx, .xls) are supported. Got: " + fileName,
+                    "INVALID_FORMAT",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
 
         try {
+            logger.info("Starting file processing...");
+
+            // Process the file
             Map<String, Object> result = itemsUploadService.uploadItemsFromFile(file, userId);
 
             boolean success = (boolean) result.get("success");
             HttpStatus status = success ? HttpStatus.OK : HttpStatus.BAD_REQUEST;
 
-            logger.info("Upload result: success={}, itemsCreated={}, errors={}",
-                    success,
-                    result.get("itemsCreated"),
+            logger.info("================================================");
+            logger.info("UPLOAD COMPLETED");
+            logger.info("Success: {}", success);
+            logger.info("Items Created: {}", result.get("itemsCreated"));
+            logger.info("Total Rows: {}", result.get("totalRowsProcessed"));
+            logger.info("Parse Errors: {}",
+                    ((java.util.List<?>) result.getOrDefault("parseErrors", java.util.Collections.emptyList())).size());
+            logger.info("Creation Errors: {}",
                     ((java.util.List<?>) result.getOrDefault("creationErrors", java.util.Collections.emptyList())).size());
+            logger.info("================================================");
 
             return ResponseEntity.status(status).body(result);
 
         } catch (IOException e) {
-            logger.error("File upload failed: {}", e.getMessage(), e);
+            logger.error("================================================");
+            logger.error("IOException OCCURRED");
+            logger.error("Message: {}", e.getMessage());
+            logger.error("Cause: {}", e.getCause() != null ? e.getCause().getMessage() : "None");
+            logger.error("Stack trace:", e);
+            logger.error("================================================");
 
             Map<String, Object> errorResponse = new HashMap<>();
             errorResponse.put("success", false);
-            errorResponse.put("message", "Failed to process file: " + e.getMessage());
-            errorResponse.put("error", e.getClass().getSimpleName());
+            errorResponse.put("message", "Failed to read or process Excel file: " + e.getMessage());
+            errorResponse.put("error", "IO_ERROR");
+            errorResponse.put("errorType", e.getClass().getSimpleName());
+            errorResponse.put("fileName", file.getOriginalFilename());
+
+            if (e.getCause() != null) {
+                errorResponse.put("rootCause", e.getCause().getMessage());
+            }
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+
+        } catch (IllegalArgumentException e) {
+            logger.error("================================================");
+            logger.error("IllegalArgumentException OCCURRED");
+            logger.error("Message: {}", e.getMessage());
+            logger.error("Stack trace:", e);
+            logger.error("================================================");
+
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("message", "Invalid input: " + e.getMessage());
+            errorResponse.put("error", "INVALID_INPUT");
+            errorResponse.put("errorType", e.getClass().getSimpleName());
+
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+
+        } catch (NullPointerException e) {
+            logger.error("================================================");
+            logger.error("NullPointerException OCCURRED");
+            logger.error("Message: {}", e.getMessage());
+            logger.error("Location: {}", e.getStackTrace()[0]);
+            logger.error("Full stack trace:", e);
+            logger.error("================================================");
+
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("message", "Null value encountered: " + e.getMessage());
+            errorResponse.put("error", "NULL_POINTER");
+            errorResponse.put("errorType", e.getClass().getSimpleName());
+            errorResponse.put("location", e.getStackTrace()[0].toString());
+            errorResponse.put("hint", "Check if all required services are properly injected");
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+
+        } catch (RuntimeException e) {
+            logger.error("================================================");
+            logger.error("RuntimeException OCCURRED");
+            logger.error("Message: {}", e.getMessage());
+            logger.error("Cause: {}", e.getCause() != null ? e.getCause().getMessage() : "None");
+            logger.error("Stack trace:", e);
+            logger.error("================================================");
+
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("message", "Runtime error: " + e.getMessage());
+            errorResponse.put("error", "RUNTIME_ERROR");
+            errorResponse.put("errorType", e.getClass().getSimpleName());
+
+            if (e.getCause() != null) {
+                errorResponse.put("rootCause", e.getCause().getMessage());
+                errorResponse.put("rootCauseType", e.getCause().getClass().getSimpleName());
+            }
+
+            // Add first few stack trace elements
+            StackTraceElement[] trace = e.getStackTrace();
+            if (trace.length > 0) {
+                errorResponse.put("topStackTrace", trace[0].toString());
+            }
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+
+        } catch (Exception e) {
+            logger.error("================================================");
+            logger.error("UNEXPECTED EXCEPTION OCCURRED");
+            logger.error("Type: {}", e.getClass().getName());
+            logger.error("Message: {}", e.getMessage());
+            logger.error("Cause: {}", e.getCause() != null ? e.getCause().getMessage() : "None");
+            logger.error("Full stack trace:", e);
+            logger.error("================================================");
+
+            // Get full stack trace as string
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            String stackTrace = sw.toString();
+
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("message", "Unexpected error: " + e.getMessage());
+            errorResponse.put("error", "UNEXPECTED_ERROR");
+            errorResponse.put("errorType", e.getClass().getName());
+            errorResponse.put("stackTrace", stackTrace);
+
+            if (e.getCause() != null) {
+                errorResponse.put("rootCause", e.getCause().getMessage());
+                errorResponse.put("rootCauseType", e.getCause().getClass().getName());
+            }
 
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
         }
@@ -91,24 +222,88 @@ public class ItemsUploadController {
             Map<String, Object> errorResponse = new HashMap<>();
             errorResponse.put("valid", false);
             errorResponse.put("message", "Failed to validate file: " + e.getMessage());
+            errorResponse.put("error", e.getClass().getSimpleName());
 
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+        } catch (Exception e) {
+            logger.error("Unexpected validation error: {}", e.getMessage(), e);
+
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("valid", false);
+            errorResponse.put("message", "Unexpected error: " + e.getMessage());
+            errorResponse.put("error", e.getClass().getName());
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
         }
     }
 
     /**
      * Get upload template information
-     * GET /api/upload/template
      */
     @GetMapping("/template")
     public ResponseEntity<Map<String, Object>> getUploadTemplate() {
-        Map<String, Object> template = itemsUploadService.getUploadTemplate();
-        return ResponseEntity.ok(template);
+        try {
+            Map<String, Object> template = itemsUploadService.getUploadTemplate();
+            return ResponseEntity.ok(template);
+        } catch (Exception e) {
+            logger.error("Failed to get template info: {}", e.getMessage(), e);
+            return createErrorResponse("Failed to get template info", "TEMPLATE_ERROR", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 
     /**
-     * Get upload instructions
-     * GET /api/upload/instructions
+     * Health check with dependency verification
+     */
+    @GetMapping("/health")
+    public ResponseEntity<Map<String, Object>> healthCheck() {
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "UP");
+        response.put("service", "Items Upload Service");
+        response.put("timestamp", java.time.LocalDateTime.now().toString());
+
+        // Check if service is injected
+        if (itemsUploadService == null) {
+            response.put("serviceInjected", false);
+            response.put("error", "ItemsUploadService is not injected");
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
+        }
+
+        response.put("serviceInjected", true);
+        response.put("features", "SKU Support, Auto-detection, Multi-sheet");
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Debug endpoint to check configuration
+     */
+    @GetMapping("/debug")
+    public ResponseEntity<Map<String, Object>> debugInfo() {
+        Map<String, Object> debug = new HashMap<>();
+        debug.put("timestamp", java.time.LocalDateTime.now().toString());
+        debug.put("serviceInjected", itemsUploadService != null);
+        debug.put("javaVersion", System.getProperty("java.version"));
+        debug.put("osName", System.getProperty("os.name"));
+        debug.put("maxMemory", Runtime.getRuntime().maxMemory() / (1024 * 1024) + " MB");
+        debug.put("freeMemory", Runtime.getRuntime().freeMemory() / (1024 * 1024) + " MB");
+
+        return ResponseEntity.ok(debug);
+    }
+
+    // Helper method to create error responses
+    private ResponseEntity<Map<String, Object>> createErrorResponse(
+            String message, String errorCode, HttpStatus status) {
+        Map<String, Object> errorResponse = new HashMap<>();
+        errorResponse.put("success", false);
+        errorResponse.put("message", message);
+        errorResponse.put("error", errorCode);
+        errorResponse.put("timestamp", java.time.LocalDateTime.now().toString());
+        errorResponse.put("status", status.value());
+        return ResponseEntity.status(status).body(errorResponse);
+    }
+
+    /**
+     * Get upload instructions (existing method - unchanged)
      */
     @GetMapping("/instructions")
     public ResponseEntity<Map<String, Object>> getUploadInstructions() {
@@ -154,58 +349,11 @@ public class ItemsUploadController {
                 "behavior", "Items with same name but different SKU = separate items"
         ));
 
-        instructions.put("examples", Map.of(
-                "withSKU", Map.of(
-                        "description", "Items with SKU variants",
-                        "columns", "Category | Item Name | Item SKU | UOM | Price | Stock",
-                        "example1", "HK Chemicals | Pril-Dishwash | 125ml | Bottle | 17.00 | 50",
-                        "example2", "HK Chemicals | Pril-Dishwash | 500ml | Bottle | 52.00 | 30",
-                        "note", "Creates 2 separate items"
-                ),
-                "skuInName", Map.of(
-                        "description", "SKU embedded in item name",
-                        "input", "Pril-Dishwash 125ml",
-                        "result", "Item Name: 'Pril-Dishwash', SKU: '125ml'"
-                )
-        ));
-
-        instructions.put("bestPractices", new String[]{
-                "1. Use clear column headers in the first few rows",
-                "2. Keep item names consistent across uploads",
-                "3. Use SKU for variants (different sizes/packages)",
-                "4. Remove empty rows and columns",
-                "5. Test with small file first (5-10 items)",
-                "6. Different SKUs will create separate items"
-        });
-
-        instructions.put("apiUsage", Map.of(
-                "endpoint", "POST /api/upload/items",
-                "method", "multipart/form-data",
-                "parameter", "file (Excel file)",
-                "header", "X-User-Id (optional, defaults to 1)",
-                "response", "JSON with success status, created items count, and errors"
-        ));
-
         return ResponseEntity.ok(instructions);
     }
 
     /**
-     * Health check
-     * GET /api/upload/health
-     */
-    @GetMapping("/health")
-    public ResponseEntity<Map<String, String>> healthCheck() {
-        Map<String, String> response = new HashMap<>();
-        response.put("status", "UP");
-        response.put("service", "Items Upload Service");
-        response.put("features", "SKU Support, Auto-detection, Multi-sheet");
-        response.put("timestamp", java.time.LocalDateTime.now().toString());
-        return ResponseEntity.ok(response);
-    }
-
-    /**
      * Get supported file formats
-     * GET /api/upload/formats
      */
     @GetMapping("/formats")
     public ResponseEntity<Map<String, Object>> getSupportedFormats() {

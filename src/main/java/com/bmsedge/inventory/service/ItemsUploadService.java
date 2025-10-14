@@ -35,7 +35,7 @@ public class ItemsUploadService {
     @Autowired
     private CategoryRepository categoryRepository;
 
-    @Transactional
+
     public Map<String, Object> uploadItemsFromFile(MultipartFile file, Long userId) throws IOException {
         Map<String, Object> result = new HashMap<>();
         String fileName = file.getOriginalFilename();
@@ -71,7 +71,7 @@ public class ItemsUploadService {
             return result;
         }
 
-        // Create items
+        // Create items - each item creation is in its own transaction
         List<ItemResponse> createdItems = new ArrayList<>();
         List<String> creationErrors = new ArrayList<>();
 
@@ -79,8 +79,11 @@ public class ItemsUploadService {
             try {
                 ItemRequest itemRequest = itemRequests.get(i);
                 validateAndFixItemRequest(itemRequest);
+
+                // This method has @Transactional, so each item gets its own transaction
                 ItemResponse itemResponse = itemService.createItem(itemRequest, userId);
                 createdItems.add(itemResponse);
+
             } catch (Exception e) {
                 String errorMsg = String.format("Row %d (%s %s): %s",
                         i + 2,
