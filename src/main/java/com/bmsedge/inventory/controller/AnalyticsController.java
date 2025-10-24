@@ -2,6 +2,7 @@ package com.bmsedge.inventory.controller;
 
 import com.bmsedge.inventory.dto.AnalyticsResponse;
 import com.bmsedge.inventory.model.Item;
+import com.bmsedge.inventory.repository.ConsumptionRecordRepository;
 import com.bmsedge.inventory.repository.ItemRepository;
 import com.bmsedge.inventory.service.AnalyticsService;
 import com.bmsedge.inventory.service.FootfallService;
@@ -33,6 +34,9 @@ public class AnalyticsController {
 
     @Autowired
     private ItemRepository itemRepository;
+
+    @Autowired
+    private ConsumptionRecordRepository consumptionRecordRepository;
 
     /**
      * Legacy endpoint - Get basic analytics
@@ -175,6 +179,243 @@ public class AnalyticsController {
         } catch (Exception e) {
             Map<String, Object> errorResponse = new HashMap<>();
             errorResponse.put("error", "Error retrieving stock levels");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    // Add these NEW endpoints to your existing AnalyticsController.java
+// Place them at the end of the class, before the closing brace
+
+    /**
+     * NEW ENDPOINT 1: Monthly Stock Value Trend
+     * GET /api/analytics/monthly-stock-value-trend
+     * Usage: ?startDate=2025-01-01&endDate=2025-12-31&categoryId=1
+     */
+    @GetMapping("/monthly-stock-value-trend")
+    public ResponseEntity<Map<String, Object>> getMonthlyStockValueTrend(
+            @RequestParam(value = "startDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(value = "endDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(value = "categoryId", required = false) Long categoryId) {
+
+        try {
+            Map<String, Object> trendData = analyticsService.getMonthlyStockValueTrend(startDate, endDate, categoryId);
+            return ResponseEntity.ok(trendData);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving monthly stock value trend");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * NEW ENDPOINT 2: Forecast vs Actual with Bins
+     * GET /api/analytics/forecast-vs-actual-bins
+     * Usage: ?year=2025&month=7&categoryId=1
+     */
+    @GetMapping("/forecast-vs-actual-bins")
+    public ResponseEntity<Map<String, Object>> getForecastVsActualWithBins(
+            @RequestParam(value = "year", defaultValue = "2025") int year,
+            @RequestParam(value = "month", defaultValue = "7") int month,
+            @RequestParam(value = "categoryId", required = false) Long categoryId) {
+
+        try {
+            Map<String, Object> forecastData = analyticsService.getForecastVsActualWithBins(year, month, categoryId);
+            return ResponseEntity.ok(forecastData);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving forecast vs actual data");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+    /**
+     * NEW ENDPOINT 3: Stock Distribution by Category
+     * GET /api/analytics/stock-distribution-category
+     * Usage: /api/analytics/stock-distribution-category
+     */
+    @GetMapping("/stock-distribution-category")
+    public ResponseEntity<Map<String, Object>> getStockDistributionByCategory() {
+        try {
+            Map<String, Object> distributionData = analyticsService.getStockDistributionByCategory();
+            return ResponseEntity.ok(distributionData);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving stock distribution");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * NEW ENDPOINT 4: Budget KPIs Dashboard
+     * GET /api/analytics/budget-kpis
+     * Usage: ?startDate=2025-01-01&endDate=2025-12-31
+     */
+    @GetMapping("/budget-kpis")
+    public ResponseEntity<Map<String, Object>> getBudgetKPIs(
+            @RequestParam(value = "startDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(value = "endDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+
+        try {
+            Map<String, Object> kpis = analyticsService.getBudgetKPIs(startDate, endDate);
+            return ResponseEntity.ok(kpis);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving budget KPIs");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * NEW ENDPOINT 5: Budget vs Actual Spend by Month
+     * GET /api/analytics/budget-vs-actual-spend-monthly
+     * Usage: ?year=2025&categoryId=1
+     */
+    @GetMapping("/budget-vs-actual-spend-monthly")
+    public ResponseEntity<Map<String, Object>> getBudgetVsActualSpendByMonth(
+            @RequestParam(value = "year", defaultValue = "2025") int year,
+            @RequestParam(value = "categoryId", required = false) Long categoryId) {
+
+        try {
+            Map<String, Object> spendData = analyticsService.getBudgetVsActualSpendByMonth(year, categoryId);
+            return ResponseEntity.ok(spendData);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving budget vs actual spend");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * NEW ENDPOINT 6: Planned vs Actual Comparison
+     * GET /api/analytics/planned-vs-actual
+     * Usage: ?startDate=2025-01-01&endDate=2025-12-31&categoryId=1
+     */
+    @GetMapping("/planned-vs-actual")
+    public ResponseEntity<Map<String, Object>> getPlannedVsActual(
+            @RequestParam(value = "startDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(value = "endDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(value = "categoryId", required = false) Long categoryId) {
+
+        try {
+            Map<String, Object> comparisonData = analyticsService.getPlannedVsActual(startDate, endDate, categoryId);
+            return ResponseEntity.ok(comparisonData);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving planned vs actual comparison");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * NEW ENDPOINT 7: Cost/Consumption Scatter Plot
+     * GET /api/analytics/cost-consumption-scatter
+     * Usage: ?startDate=2025-01-01&endDate=2025-12-31&categoryId=1
+     */
+    @GetMapping("/cost-consumption-scatter")
+    public ResponseEntity<Map<String, Object>> getCostConsumptionScatter(
+            @RequestParam(value = "startDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(value = "endDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(value = "categoryId", required = false) Long categoryId) {
+
+        try {
+            Map<String, Object> scatterData = analyticsService.getCostConsumptionScatter(startDate, endDate, categoryId);
+            return ResponseEntity.ok(scatterData);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving cost/consumption scatter data");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * NEW ENDPOINT 8: Bin Variance Analysis
+     * GET /api/analytics/bin-variance-analysis
+     * Usage: ?year=2025&month=7&categoryId=1
+     */
+    @GetMapping("/bin-variance-analysis")
+    public ResponseEntity<Map<String, Object>> getBinVarianceAnalysis(
+            @RequestParam(value = "categoryId", required = false) Long categoryId) {
+
+        try {
+            // Call the updated service method that returns all months and lastMonth by default
+            Map<String, Object> binAnalysis = analyticsService.getBinVarianceAnalysis(categoryId);
+            return ResponseEntity.ok(binAnalysis);
+
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error analyzing bin variance");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+
+    /**
+     * UTILITY ENDPOINT: Get Available Date Range for Analytics
+     * GET /api/analytics/available-date-range
+     */
+    @GetMapping("/available-date-range")
+    public ResponseEntity<Map<String, Object>> getAvailableDateRange() {
+        try {
+            Map<String, Object> result = new HashMap<>();
+
+            // Get actual data range from consumption records
+            LocalDate minDate = consumptionRecordRepository.findAll().stream()
+                    .map(record -> record.getConsumptionDate())
+                    .min(LocalDate::compareTo)
+                    .orElse(LocalDate.of(2025, 1, 1));
+
+            LocalDate maxDate = consumptionRecordRepository.findAll().stream()
+                    .map(record -> record.getConsumptionDate())
+                    .max(LocalDate::compareTo)
+                    .orElse(LocalDate.of(2025, 7, 31));
+
+            result.put("minDate", minDate.toString());
+            result.put("maxDate", maxDate.toString());
+            result.put("availableMonths", java.time.temporal.ChronoUnit.MONTHS.between(
+                    minDate.withDayOfMonth(1),
+                    maxDate.withDayOfMonth(1)) + 1);
+
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving date range");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * BULK ANALYTICS ENDPOINT: Get all dashboard data in one call
+     * GET /api/analytics/dashboard-bulk
+     */
+    @GetMapping("/dashboard-bulk")
+    public ResponseEntity<Map<String, Object>> getDashboardBulkData(
+            @RequestParam(value = "year", defaultValue = "2025") int year,
+            @RequestParam(value = "month", defaultValue = "7") int month,
+            @RequestParam(value = "categoryId", required = false) Long categoryId) {
+
+        try {
+            Map<String, Object> bulkData = new HashMap<>();
+
+            // Get all essential dashboard data
+            bulkData.put("kpis", analyticsService.getBudgetKPIs(null, null));
+            bulkData.put("stockDistribution", analyticsService.getStockDistributionByCategory());
+            bulkData.put("forecastVsActual", analyticsService.getForecastVsActualWithBins(year, month, categoryId));
+            bulkData.put("binVariance", analyticsService.getBinVarianceAnalysis(categoryId));
+            bulkData.put("monthlyTrend", analyticsService.getMonthlyStockValueTrend(null, null, categoryId));
+
+            return ResponseEntity.ok(bulkData);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving bulk dashboard data");
             errorResponse.put("message", e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
         }

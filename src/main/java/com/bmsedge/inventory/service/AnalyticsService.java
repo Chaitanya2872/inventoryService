@@ -6,6 +6,7 @@ import com.bmsedge.inventory.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.*;
@@ -59,33 +60,802 @@ public class AnalyticsService {
     /**
      * FIXED: Get actual date range from consumption records
      */
-    private Map<String, LocalDate> getActualDataRange() {
-        Map<String, LocalDate> range = new HashMap<>();
+    public Map<String, LocalDate> getActualDataRange() {
+        Map<String, LocalDate> dateRange = new HashMap<>();
+        try {
+            LocalDate minDate = consumptionRecordRepository.findMinConsumptionDate();
+            LocalDate maxDate = consumptionRecordRepository.findMaxConsumptionDate();
 
-        List<ConsumptionRecord> records = consumptionRecordRepository.findAll();
+            // If there’s no data, default to current month
+            if (minDate == null || maxDate == null) {
+                YearMonth now = YearMonth.now();
+                minDate = now.atDay(1);
+                maxDate = now.atEndOfMonth();
+            }
 
-        if (!records.isEmpty()) {
-            LocalDate minDate = records.stream()
-                    .map(ConsumptionRecord::getConsumptionDate)
-                    .filter(Objects::nonNull)
-                    .min(LocalDate::compareTo)
-                    .orElse(LocalDate.of(2025, 1, 1));
+            dateRange.put("minDate", minDate);
+            dateRange.put("maxDate", maxDate);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return dateRange;
+    }
 
-            LocalDate maxDate = records.stream()
-                    .map(ConsumptionRecord::getConsumptionDate)
-                    .filter(Objects::nonNull)
-                    .max(LocalDate::compareTo)
-                    .orElse(LocalDate.of(2025, 7, 31));
+    public Map<String, Object> getMonthlyStockValueTrend(LocalDate startDate, LocalDate endDate, Long categoryId) {
+        Map<String, Object> result = new HashMap<>();
 
-            range.put("minDate", minDate);
-            range.put("maxDate", maxDate);
-        } else {
-            range.put("minDate", LocalDate.of(2025, 1, 1));
-            range.put("maxDate", LocalDate.of(2025, 7, 31));
+        try {
+            // Handle null date inputs
+            if (endDate == null || startDate == null) {
+                Map<String, LocalDate> dateRange = getActualDataRange();
+                startDate = (startDate == null) ? dateRange.get("minDate") : startDate;
+                endDate = (endDate == null) ? dateRange.get("maxDate") : endDate;
+            }
+
+            result.put("startDate", startDate.toString());
+            result.put("endDate", endDate.toString());
+
+            // 1️⃣ Fetch all items (filter by category if provided)
+            List<Item> items = (categoryId != null)
+                    ? itemRepository.findAll().stream()
+                    .filter(i -> i.getCategory() != null && i.getCategory().getId().equals(categoryId))
+                    .collect(Collectors.toList())
+                    : itemRepository.findAll();
+
+            if (items.isEmpty()) {
+                result.put("trendData", new ArrayList<>());
+                result.put("totalMonths", 0);
+                return result;
+            }
+
+            // 2️⃣ Fetch all consumption records in ONE DB call
+            List<ConsumptionRecord> allRecords =
+                    consumptionRecordRepository.findByConsumptionDateBetween(startDate, endDate);
+
+            // 3️⃣ Group records by itemId
+            Map<Long, List<ConsumptionRecord>> recordsByItem = allRecords.stream()
+                    .filter(r -> r.getItem() != null)
+                    .collect(Collectors.groupingBy(r -> r.getItem().getId()));
+
+            // 4️⃣ Iterate months
+            Map<String, BigDecimal> monthlyStockValues = new TreeMap<>();
+            LocalDate current = startDate.withDayOfMonth(1);
+
+            while (!current.isAfter(endDate)) {
+                String monthKey = current.format(DateTimeFormatter.ofPattern("yyyy-MM"));
+                LocalDate monthEnd = current.with(TemporalAdjusters.lastDayOfMonth());
+                if (monthEnd.isAfter(endDate)) {
+                    monthEnd = endDate;
+                }
+
+
+                BigDecimal monthStockValue = BigDecimal.ZERO;
+
+                // 5️⃣ For each item, calculate average stock for this month
+                for (Item item : items) {
+                    LocalDate finalCurrent = current;
+                    LocalDate finalMonthEnd = monthEnd;
+                    List<ConsumptionRecord> itemRecords = recordsByItem
+                            .getOrDefault(item.getId(), List.of())
+                            .stream()
+                            .filter(r -> !r.getConsumptionDate().isBefore(finalCurrent)
+                                    && !r.getConsumptionDate().isAfter(finalMonthEnd))
+                            .sorted(Comparator.comparing(ConsumptionRecord::getConsumptionDate))
+                            .collect(Collectors.toList());
+
+                    BigDecimal stockValue;
+
+                    if (!itemRecords.isEmpty()) {
+                        BigDecimal opening = safe(itemRecords.get(0).getOpeningStock());
+                        BigDecimal closing = safe(itemRecords.get(itemRecords.size() - 1).getClosingStock());
+                        BigDecimal avgStock = opening.add(closing)
+                                .divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP);
+                        stockValue = avgStock.multiply(safe(item.getUnitPrice()));
+                    } else {
+                        stockValue = safe(item.getCurrentQuantity()).multiply(safe(item.getUnitPrice()));
+                    }
+
+                    monthStockValue = monthStockValue.add(stockValue);
+                }
+
+                if (monthStockValue.compareTo(BigDecimal.ZERO) > 0) {
+                    monthlyStockValues.put(monthKey, monthStockValue);
+                }
+
+                current = current.plusMonths(1);
+            }
+
+            // 6️⃣ Prepare chart-friendly data
+            List<Map<String, ? extends Serializable>> trendData = monthlyStockValues.entrySet().stream()
+                    .map(e -> Map.of(
+                            "month", e.getKey(),
+                            "stockValue", e.getValue(),
+                            "monthName", LocalDate.parse(e.getKey() + "-01")
+                                    .format(DateTimeFormatter.ofPattern("MMM yyyy"))
+                    ))
+                    .collect(Collectors.toList());
+
+            result.put("trendData", trendData);
+            result.put("totalMonths", trendData.size());
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            result.put("error", e.getMessage());
+            result.put("trendData", new ArrayList<>());
         }
 
-        return range;
+        return result;
     }
+
+    // 🧩 Null-safe BigDecimal helper
+    private BigDecimal safe(BigDecimal value) {
+        return (value != null) ? value : BigDecimal.ZERO;
+    }
+
+
+
+    /**monthlyStockValues.put(monthKey, monthStockValue);
+     * NEW API 2: Forecast vs Actual with Bin Variance
+     * Returns forecast vs actual data with Bin1 (Days 1-15) and Bin2 (Days 16-31) separation
+     */
+    public Map<String, Object> getForecastVsActualWithBins(int year, int month, Long categoryId) {
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            YearMonth yearMonth = YearMonth.of(year, month);
+            LocalDate monthStart = yearMonth.atDay(1);
+            LocalDate monthEnd = yearMonth.atEndOfMonth();
+            LocalDate bin1End = monthStart.plusDays(14); // Days 1-15
+            LocalDate bin2Start = bin1End.plusDays(1);   // Days 16-31
+
+            result.put("year", year);
+            result.put("month", month);
+            result.put("monthName", yearMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy")));
+
+            // Get items
+            List<Item> items;
+            if (categoryId != null) {
+                items = itemRepository.findAll().stream()
+                        .filter(item -> item.getCategory() != null && item.getCategory().getId().equals(categoryId))
+                        .collect(Collectors.toList());
+            } else {
+                items = itemRepository.findAll();
+            }
+
+            // Calculate Bin 1 (Days 1-15)
+            Map<String, Object> bin1Data = calculateBinData("Bin1 (Days 1-15)", items, monthStart, bin1End);
+
+            // Calculate Bin 2 (Days 16-31)
+            Map<String, Object> bin2Data = calculateBinData("Bin2 (Days 16-31)", items, bin2Start, monthEnd);
+
+            // Overall month data
+            Map<String, Object> monthData = calculateBinData("Full Month", items, monthStart, monthEnd);
+
+            result.put("bin1", bin1Data);
+            result.put("bin2", bin2Data);
+            result.put("monthTotal", monthData);
+
+            // Calculate bin variance
+            BigDecimal bin1Actual = (BigDecimal) bin1Data.get("actualConsumption");
+            BigDecimal bin2Actual = (BigDecimal) bin2Data.get("actualConsumption");
+            BigDecimal binVariance = bin2Actual.subtract(bin1Actual);
+            BigDecimal binVariancePercent = bin1Actual.compareTo(BigDecimal.ZERO) > 0 ?
+                    safeDivide(binVariance.multiply(BigDecimal.valueOf(100)), bin1Actual, 2, RoundingMode.HALF_UP) :
+                    BigDecimal.ZERO;
+
+            result.put("binVariance", binVariance);
+            result.put("binVariancePercent", binVariancePercent);
+
+        } catch (Exception e) {
+            System.err.println("Error in getForecastVsActualWithBins: " + e.getMessage());
+            e.printStackTrace();
+            result.put("error", e.getMessage());
+        }
+
+        return result;
+    }
+
+    /**
+     * Helper method to calculate bin data (forecast vs actual)
+     */
+    private Map<String, Object> calculateBinData(String binName, List<Item> items,
+                                                 LocalDate startDate, LocalDate endDate) {
+        Map<String, Object> binData = new HashMap<>();
+        binData.put("binName", binName);
+        binData.put("startDate", startDate.toString());
+        binData.put("endDate", endDate.toString());
+
+        BigDecimal totalForecast = BigDecimal.ZERO;
+        BigDecimal totalActual = BigDecimal.ZERO;
+
+        for (Item item : items) {
+            // Get actual consumption
+            List<ConsumptionRecord> records = consumptionRecordRepository
+                    .findByItemAndConsumptionDateBetween(item, startDate, endDate);
+
+            BigDecimal actualConsumption = records.stream()
+                    .map(ConsumptionRecord::getConsumedQuantity)
+                    .filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            // Calculate forecast (using avg daily consumption * days in period)
+            long daysInPeriod = ChronoUnit.DAYS.between(startDate, endDate) + 1;
+            BigDecimal avgDaily = nullSafe(item.getAvgDailyConsumption());
+            BigDecimal forecastConsumption = avgDaily.multiply(BigDecimal.valueOf(daysInPeriod));
+
+            totalForecast = totalForecast.add(forecastConsumption);
+            totalActual = totalActual.add(actualConsumption);
+        }
+
+        // Calculate variance
+        BigDecimal variance = totalActual.subtract(totalForecast);
+        BigDecimal variancePercent = totalForecast.compareTo(BigDecimal.ZERO) > 0 ?
+                safeDivide(variance.multiply(BigDecimal.valueOf(100)), totalForecast, 2, RoundingMode.HALF_UP) :
+                BigDecimal.ZERO;
+
+        // Calculate accuracy
+        BigDecimal accuracy = totalForecast.compareTo(BigDecimal.ZERO) > 0 ?
+                BigDecimal.valueOf(100).subtract(variancePercent.abs()) :
+                BigDecimal.ZERO;
+
+        binData.put("forecastConsumption", totalForecast);
+        binData.put("actualConsumption", totalActual);
+        binData.put("variance", variance);
+        binData.put("variancePercent", variancePercent);
+        binData.put("accuracy", accuracy);
+
+        return binData;
+    }
+
+    /**
+     * NEW API 3: Stock Distribution by Category (for donut/pie chart)
+     */
+    public Map<String, Object> getStockDistributionByCategory() {
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            List<Item> items = itemRepository.findAll();
+
+            // Group by category
+            Map<Category, BigDecimal> categoryStockValues = new HashMap<>();
+
+            for (Item item : items) {
+                Category category = item.getCategory();
+                if (category != null) {
+                    BigDecimal stockValue = nullSafe(item.getCurrentQuantity())
+                            .multiply(nullSafe(item.getUnitPrice()));
+                    categoryStockValues.merge(category, stockValue, BigDecimal::add);
+                }
+            }
+
+            // Calculate total
+            BigDecimal totalStockValue = categoryStockValues.values().stream()
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            // Convert to list with percentages
+            List<Map<String, Object>> distributionData = new ArrayList<>();
+            for (Map.Entry<Category, BigDecimal> entry : categoryStockValues.entrySet()) {
+                Map<String, Object> categoryData = new HashMap<>();
+                categoryData.put("categoryId", entry.getKey().getId());
+                categoryData.put("categoryName", entry.getKey().getCategoryName());
+                categoryData.put("stockValue", entry.getValue());
+                categoryData.put("percentage", safeDivide(
+                        entry.getValue().multiply(BigDecimal.valueOf(100)),
+                        totalStockValue, 2, RoundingMode.HALF_UP));
+                distributionData.add(categoryData);
+            }
+
+            // Sort by stock value descending
+            distributionData.sort((a, b) -> {
+                BigDecimal valueA = (BigDecimal) a.get("stockValue");
+                BigDecimal valueB = (BigDecimal) b.get("stockValue");
+                return valueB.compareTo(valueA);
+            });
+
+            result.put("distributionData", distributionData);
+            result.put("totalStockValue", totalStockValue);
+            result.put("totalCategories", distributionData.size());
+
+        } catch (Exception e) {
+            System.err.println("Error in getStockDistributionByCategory: " + e.getMessage());
+            e.printStackTrace();
+            result.put("error", e.getMessage());
+            result.put("distributionData", new ArrayList<>());
+        }
+
+        return result;
+    }
+
+    /**
+     * NEW API 4: Budget KPIs Dashboard
+     */
+    public Map<String, Object> getBudgetKPIs(LocalDate startDate, LocalDate endDate) {
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            // Get date range
+            if (endDate == null || startDate == null) {
+                Map<String, LocalDate> dateRange = getActualDataRange();
+                startDate = (startDate == null) ? dateRange.get("minDate") : startDate;
+                endDate = (endDate == null) ? dateRange.get("maxDate") : endDate;
+            }
+
+            List<Item> items = itemRepository.findAll();
+
+            // KPI 1: Total Stock Value
+            BigDecimal totalStockValue = items.stream()
+                    .map(item -> nullSafe(item.getCurrentQuantity()).multiply(nullSafe(item.getUnitPrice())))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            // KPI 2: Forecast Accuracy (average over period)
+            List<Map<String, Object>> monthlyAccuracy = new ArrayList<>();
+            LocalDate current = startDate.withDayOfMonth(1);
+            BigDecimal totalAccuracy = BigDecimal.ZERO;
+            int monthCount = 0;
+
+            while (!current.isAfter(endDate)) {
+                LocalDate monthEnd = current.with(TemporalAdjusters.lastDayOfMonth());
+                if (monthEnd.isAfter(endDate)) monthEnd = endDate;
+
+                BigDecimal monthForecast = BigDecimal.ZERO;
+                BigDecimal monthActual = BigDecimal.ZERO;
+
+                for (Item item : items) {
+                    List<ConsumptionRecord> records = consumptionRecordRepository
+                            .findByItemAndConsumptionDateBetween(item, current, monthEnd);
+
+                    BigDecimal actual = records.stream()
+                            .map(ConsumptionRecord::getConsumedQuantity)
+                            .filter(Objects::nonNull)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                    long daysInMonth = ChronoUnit.DAYS.between(current, monthEnd) + 1;
+                    BigDecimal forecast = nullSafe(item.getAvgDailyConsumption())
+                            .multiply(BigDecimal.valueOf(daysInMonth));
+
+                    monthForecast = monthForecast.add(forecast);
+                    monthActual = monthActual.add(actual);
+                }
+
+                BigDecimal monthAccuracy = monthForecast.compareTo(BigDecimal.ZERO) > 0 ?
+                        BigDecimal.valueOf(100).subtract(
+                                safeDivide(monthActual.subtract(monthForecast).abs()
+                                        .multiply(BigDecimal.valueOf(100)), monthForecast, 2, RoundingMode.HALF_UP)
+                        ) : BigDecimal.ZERO;
+
+                totalAccuracy = totalAccuracy.add(monthAccuracy);
+                monthCount++;
+
+                current = current.plusMonths(1);
+            }
+
+            BigDecimal avgForecastAccuracy = monthCount > 0 ?
+                    safeDivide(totalAccuracy, BigDecimal.valueOf(monthCount), 2, RoundingMode.HALF_UP) :
+                    BigDecimal.ZERO;
+
+            // KPI 3: Predicted Stockouts (items with coverage < 7 days)
+            int predictedStockouts = 0;
+            List<Map<String, Object>> stockoutItems = new ArrayList<>();
+
+            for (Item item : items) {
+                BigDecimal avgDaily = nullSafe(item.getAvgDailyConsumption());
+                if (avgDaily.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal coverageDays = safeDivide(
+                            nullSafe(item.getCurrentQuantity()), avgDaily, 0, RoundingMode.UP);
+
+                    if (coverageDays.compareTo(BigDecimal.valueOf(7)) < 0) {
+                        predictedStockouts++;
+
+                        Map<String, Object> stockoutItem = new HashMap<>();
+                        stockoutItem.put("itemId", item.getId());
+                        stockoutItem.put("itemName", item.getItemName());
+                        stockoutItem.put("categoryName", item.getCategory().getCategoryName());
+                        stockoutItem.put("currentStock", item.getCurrentQuantity());
+                        stockoutItem.put("coverageDays", coverageDays.intValue());
+                        stockoutItems.add(stockoutItem);
+                    }
+                }
+            }
+
+            // KPI 4: Reorder Alerts
+            long reorderAlerts = items.stream()
+                    .filter(Item::needsReorder)
+                    .count();
+
+            result.put("totalStockValue", totalStockValue);
+            result.put("forecastAccuracy", avgForecastAccuracy);
+            result.put("predictedStockouts", predictedStockouts);
+            result.put("reorderAlerts", reorderAlerts);
+            result.put("stockoutItems", stockoutItems);
+            result.put("totalItems", items.size());
+
+        } catch (Exception e) {
+            System.err.println("Error in getBudgetKPIs: " + e.getMessage());
+            e.printStackTrace();
+            result.put("error", e.getMessage());
+        }
+
+        return result;
+    }
+
+    /**
+     * NEW API 5: Budget vs Actual Spend by Month (for area chart)
+     */
+    public Map<String, Object> getBudgetVsActualSpendByMonth(int year, Long categoryId) {
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            result.put("year", year);
+
+            List<Map<String, Object>> monthlyData = new ArrayList<>();
+
+            for (int month = 1; month <= 12; month++) {
+                YearMonth yearMonth = YearMonth.of(year, month);
+                LocalDate monthStart = yearMonth.atDay(1);
+                LocalDate monthEnd = yearMonth.atEndOfMonth();
+
+                // Get consumption records
+                List<ConsumptionRecord> records;
+                if (categoryId != null) {
+                    records = consumptionRecordRepository
+                            .findByCategoryAndDateBetween(categoryId, monthStart, monthEnd);
+                } else {
+                    records = consumptionRecordRepository
+                            .findByConsumptionDateBetween(monthStart, monthEnd);
+                }
+
+                // Calculate actual spend
+                BigDecimal actualSpend = BigDecimal.ZERO;
+                for (ConsumptionRecord record : records) {
+                    BigDecimal cost = nullSafe(record.getConsumedQuantity())
+                            .multiply(nullSafe(record.getItem().getUnitPrice()));
+                    actualSpend = actualSpend.add(cost);
+                }
+
+                // Mock budget (in production, this would come from budget table)
+                // Using 120% of actual as planned budget
+                BigDecimal plannedBudget = actualSpend.multiply(BigDecimal.valueOf(1.2));
+
+                Map<String, Object> monthData = new HashMap<>();
+                monthData.put("month", month);
+                monthData.put("monthName", yearMonth.format(DateTimeFormatter.ofPattern("MMM yyyy")));
+                monthData.put("plannedBudget", plannedBudget);
+                monthData.put("actualSpend", actualSpend);
+                monthData.put("variance", actualSpend.subtract(plannedBudget));
+                monthData.put("variancePercent", plannedBudget.compareTo(BigDecimal.ZERO) > 0 ?
+                        safeDivide(actualSpend.subtract(plannedBudget).multiply(BigDecimal.valueOf(100)),
+                                plannedBudget, 2, RoundingMode.HALF_UP) : BigDecimal.ZERO);
+
+                monthlyData.add(monthData);
+            }
+
+            // Calculate totals
+            BigDecimal totalPlanned = monthlyData.stream()
+                    .map(m -> (BigDecimal) m.get("plannedBudget"))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal totalActual = monthlyData.stream()
+                    .map(m -> (BigDecimal) m.get("actualSpend"))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            result.put("monthlyData", monthlyData);
+            result.put("totalPlanned", totalPlanned);
+            result.put("totalActual", totalActual);
+            result.put("totalVariance", totalActual.subtract(totalPlanned));
+
+        } catch (Exception e) {
+            System.err.println("Error in getBudgetVsActualSpendByMonth: " + e.getMessage());
+            e.printStackTrace();
+            result.put("error", e.getMessage());
+            result.put("monthlyData", new ArrayList<>());
+        }
+
+        return result;
+    }
+
+    /**
+     * NEW API 6: Planned vs Actual Comparison (for donut chart)
+     */
+    public Map<String, Object> getPlannedVsActual(LocalDate startDate, LocalDate endDate, Long categoryId) {
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            // Get date range
+            if (endDate == null || startDate == null) {
+                Map<String, LocalDate> dateRange = getActualDataRange();
+                startDate = (startDate == null) ? dateRange.get("minDate") : startDate;
+                endDate = (endDate == null) ? dateRange.get("maxDate") : endDate;
+            }
+
+            result.put("startDate", startDate.toString());
+            result.put("endDate", endDate.toString());
+
+            // Get consumption records
+            List<ConsumptionRecord> records;
+            if (categoryId != null) {
+                records = consumptionRecordRepository
+                        .findByCategoryAndDateBetween(categoryId, startDate, endDate);
+            } else {
+                records = consumptionRecordRepository
+                        .findByConsumptionDateBetween(startDate, endDate);
+            }
+
+            // Calculate actual consumption/cost
+            BigDecimal actualCost = BigDecimal.ZERO;
+            BigDecimal actualQuantity = BigDecimal.ZERO;
+
+            for (ConsumptionRecord record : records) {
+                BigDecimal consumed = nullSafe(record.getConsumedQuantity());
+                BigDecimal cost = consumed.multiply(nullSafe(record.getItem().getUnitPrice()));
+                actualQuantity = actualQuantity.add(consumed);
+                actualCost = actualCost.add(cost);
+            }
+
+            // Calculate planned (using forecasts)
+            List<Item> items;
+            if (categoryId != null) {
+                items = itemRepository.findAll().stream()
+                        .filter(item -> item.getCategory() != null && item.getCategory().getId().equals(categoryId))
+                        .collect(Collectors.toList());
+            } else {
+                items = itemRepository.findAll();
+            }
+
+            long daysInPeriod = ChronoUnit.DAYS.between(startDate, endDate) + 1;
+            BigDecimal plannedQuantity = BigDecimal.ZERO;
+            BigDecimal plannedCost = BigDecimal.ZERO;
+
+            for (Item item : items) {
+                BigDecimal forecast = nullSafe(item.getAvgDailyConsumption())
+                        .multiply(BigDecimal.valueOf(daysInPeriod));
+                BigDecimal forecastCost = forecast.multiply(nullSafe(item.getUnitPrice()));
+
+                plannedQuantity = plannedQuantity.add(forecast);
+                plannedCost = plannedCost.add(forecastCost);
+            }
+
+            // Calculate variance
+            BigDecimal quantityVariance = actualQuantity.subtract(plannedQuantity);
+            BigDecimal costVariance = actualCost.subtract(plannedCost);
+
+            result.put("planned", Map.of(
+                    "quantity", plannedQuantity,
+                    "cost", plannedCost
+            ));
+            result.put("actual", Map.of(
+                    "quantity", actualQuantity,
+                    "cost", actualCost
+            ));
+            result.put("variance", Map.of(
+                    "quantity", quantityVariance,
+                    "cost", costVariance,
+                    "quantityPercent", plannedQuantity.compareTo(BigDecimal.ZERO) > 0 ?
+                            safeDivide(quantityVariance.multiply(BigDecimal.valueOf(100)),
+                                    plannedQuantity, 2, RoundingMode.HALF_UP) : BigDecimal.ZERO,
+                    "costPercent", plannedCost.compareTo(BigDecimal.ZERO) > 0 ?
+                            safeDivide(costVariance.multiply(BigDecimal.valueOf(100)),
+                                    plannedCost, 2, RoundingMode.HALF_UP) : BigDecimal.ZERO
+            ));
+
+            // Accuracy percentage
+            BigDecimal accuracy = plannedCost.compareTo(BigDecimal.ZERO) > 0 ?
+                    BigDecimal.valueOf(100).subtract(
+                            safeDivide(costVariance.abs().multiply(BigDecimal.valueOf(100)),
+                                    plannedCost, 2, RoundingMode.HALF_UP)
+                    ) : BigDecimal.ZERO;
+
+            result.put("accuracy", accuracy);
+
+        } catch (Exception e) {
+            System.err.println("Error in getPlannedVsActual: " + e.getMessage());
+            e.printStackTrace();
+            result.put("error", e.getMessage());
+        }
+
+        return result;
+    }
+
+    /**
+     * NEW API 7: Cost/Consumption Scatter Plot Data
+     */
+    public Map<String, Object> getCostConsumptionScatter(LocalDate startDate, LocalDate endDate, Long categoryId) {
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            // Get date range
+            if (endDate == null || startDate == null) {
+                Map<String, LocalDate> dateRange = getActualDataRange();
+                startDate = (startDate == null) ? dateRange.get("minDate") : startDate;
+                endDate = (endDate == null) ? dateRange.get("maxDate") : endDate;
+            }
+
+            result.put("startDate", startDate.toString());
+            result.put("endDate", endDate.toString());
+
+            // Get items
+            List<Item> items;
+            if (categoryId != null) {
+                items = itemRepository.findAll().stream()
+                        .filter(item -> item.getCategory() != null && item.getCategory().getId().equals(categoryId))
+                        .collect(Collectors.toList());
+            } else {
+                items = itemRepository.findAll();
+            }
+
+            // Calculate scatter data for each item
+            List<Map<String, Object>> scatterData = new ArrayList<>();
+
+            for (Item item : items) {
+                List<ConsumptionRecord> records = consumptionRecordRepository
+                        .findByItemAndConsumptionDateBetween(item, startDate, endDate);
+
+                if (!records.isEmpty()) {
+                    BigDecimal totalConsumption = records.stream()
+                            .map(ConsumptionRecord::getConsumedQuantity)
+                            .filter(Objects::nonNull)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                    BigDecimal totalCost = totalConsumption.multiply(nullSafe(item.getUnitPrice()));
+
+                    Map<String, Object> point = new HashMap<>();
+                    point.put("itemId", item.getId());
+                    point.put("itemName", item.getItemName());
+                    point.put("categoryName", item.getCategory().getCategoryName());
+                    point.put("consumption", totalConsumption);
+                    point.put("cost", totalCost);
+                    point.put("unitPrice", item.getUnitPrice());
+                    point.put("avgDailyConsumption", item.getAvgDailyConsumption());
+
+                    scatterData.add(point);
+                }
+            }
+
+            // Sort by cost descending
+            scatterData.sort((a, b) -> {
+                BigDecimal costA = (BigDecimal) a.get("cost");
+                BigDecimal costB = (BigDecimal) b.get("cost");
+                return costB.compareTo(costA);
+            });
+
+            result.put("scatterData", scatterData);
+            result.put("totalPoints", scatterData.size());
+
+        } catch (Exception e) {
+            System.err.println("Error in getCostConsumptionScatter: " + e.getMessage());
+            e.printStackTrace();
+            result.put("error", e.getMessage());
+            result.put("scatterData", new ArrayList<>());
+        }
+
+        return result;
+    }
+
+    /**
+     * NEW API 8: Bin Variance Analysis (Bin1 vs Bin2 comparison)
+     */
+    public Map<String, Object> getBinVarianceAnalysis(Long categoryId) {
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            // 1️⃣ Fetch all months with data
+            List<Object[]> monthsData = categoryId != null ?
+                    consumptionRecordRepository.findRecordedMonthsByCategory(categoryId) :
+                    consumptionRecordRepository.findRecordedMonths();
+
+            if (monthsData.isEmpty()) {
+                result.put("error", "No consumption data available");
+                result.put("allMonths", Collections.emptyList());
+                result.put("lastMonth", Collections.emptyMap());
+                return result;
+            }
+
+            // 2️⃣ Convert Object[] to YearMonth safely
+            List<YearMonth> recordedMonths = monthsData.stream()
+                    .map(a -> {
+                        Number yearNum = (Number) a[0];  // Integer, Double, or BigDecimal
+                        Number monthNum = (Number) a[1];
+                        return YearMonth.of(yearNum.intValue(), monthNum.intValue());
+                    })
+                    .collect(Collectors.toList());
+
+            List<Map<String, Object>> allMonths = new ArrayList<>();
+            Map<String, Object> lastMonth = null;
+
+            // 3️⃣ Process each recorded month
+            for (YearMonth ym : recordedMonths) {
+                LocalDate monthStart = ym.atDay(1);
+                LocalDate monthEnd = ym.atEndOfMonth();
+                LocalDate bin1End = monthStart.plusDays(14);
+                LocalDate bin2Start = bin1End.plusDays(1);
+
+                // Fetch bin records
+                List<ConsumptionRecord> bin1Records = categoryId != null ?
+                        consumptionRecordRepository.findByCategoryAndDateBetween(categoryId, monthStart, bin1End) :
+                        consumptionRecordRepository.findByConsumptionDateBetween(monthStart, bin1End);
+
+                List<ConsumptionRecord> bin2Records = categoryId != null ?
+                        consumptionRecordRepository.findByCategoryAndDateBetween(categoryId, bin2Start, monthEnd) :
+                        consumptionRecordRepository.findByConsumptionDateBetween(bin2Start, monthEnd);
+
+                // Compute metrics
+                BigDecimal bin1Consumption = bin1Records.stream()
+                        .map(ConsumptionRecord::getConsumedQuantity)
+                        .filter(Objects::nonNull)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                BigDecimal bin1Cost = bin1Records.stream()
+                        .map(r -> nullSafe(r.getConsumedQuantity()).multiply(nullSafe(r.getItem().getUnitPrice())))
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                BigDecimal bin2Consumption = bin2Records.stream()
+                        .map(ConsumptionRecord::getConsumedQuantity)
+                        .filter(Objects::nonNull)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                BigDecimal bin2Cost = bin2Records.stream()
+                        .map(r -> nullSafe(r.getConsumedQuantity()).multiply(nullSafe(r.getItem().getUnitPrice())))
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                BigDecimal consumptionVariance = bin2Consumption.subtract(bin1Consumption);
+                BigDecimal costVariance = bin2Cost.subtract(bin1Cost);
+
+                BigDecimal consumptionVariancePercent = bin1Consumption.compareTo(BigDecimal.ZERO) > 0 ?
+                        safeDivide(consumptionVariance.multiply(BigDecimal.valueOf(100)), bin1Consumption, 2, RoundingMode.HALF_UP) :
+                        BigDecimal.ZERO;
+
+                BigDecimal costVariancePercent = bin1Cost.compareTo(BigDecimal.ZERO) > 0 ?
+                        safeDivide(costVariance.multiply(BigDecimal.valueOf(100)), bin1Cost, 2, RoundingMode.HALF_UP) :
+                        BigDecimal.ZERO;
+
+                // Build month map
+                Map<String, Object> monthData = Map.of(
+                        "year", ym.getYear(),
+                        "month", ym.getMonthValue(),
+                        "monthName", ym.format(DateTimeFormatter.ofPattern("MMMM yyyy")),
+                        "bin1", Map.of(
+                                "period", "Days 1-15",
+                                "consumption", bin1Consumption,
+                                "cost", bin1Cost,
+                                "recordCount", bin1Records.size()
+                        ),
+                        "bin2", Map.of(
+                                "period", "Days 16-31",
+                                "consumption", bin2Consumption,
+                                "cost", bin2Cost,
+                                "recordCount", bin2Records.size()
+                        ),
+                        "variance", Map.of(
+                                "consumption", consumptionVariance,
+                                "cost", costVariance,
+                                "consumptionPercent", consumptionVariancePercent,
+                                "costPercent", costVariancePercent
+                        ),
+                        "totalMonth", Map.of(
+                                "consumption", bin1Consumption.add(bin2Consumption),
+                                "cost", bin1Cost.add(bin2Cost)
+                        )
+                );
+
+                allMonths.add(monthData);
+                lastMonth = monthData; // last iteration = most recent month
+            }
+
+            result.put("allMonths", allMonths);
+            result.put("lastMonth", lastMonth);
+
+        } catch (Exception e) {
+            System.err.println("Error in getBinVarianceAnalysis: " + e.getMessage());
+            e.printStackTrace();
+            result.put("error", e.getMessage());
+            result.put("allMonths", Collections.emptyList());
+            result.put("lastMonth", Collections.emptyMap());
+        }
+
+        return result;
+    }
+
+
+
+
 
     // ===== MAIN API METHODS =====
 
@@ -2079,6 +2849,8 @@ public class AnalyticsService {
 
         return result;
     }
+
+
 
     // Keep helper class
     private static class ItemConsumptionSummary {

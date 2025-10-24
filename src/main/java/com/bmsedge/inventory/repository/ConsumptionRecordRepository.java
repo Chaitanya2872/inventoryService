@@ -275,4 +275,24 @@ public interface ConsumptionRecordRepository extends JpaRepository<ConsumptionRe
                                        @Param("endDate") LocalDate endDate);
 
     List<ConsumptionRecord> findByItem(Item item);
+
+    @Query("SELECT MIN(c.consumptionDate) FROM ConsumptionRecord c")
+    LocalDate findMinConsumptionDate();
+
+    @Query("SELECT MAX(c.consumptionDate) FROM ConsumptionRecord c")
+    LocalDate findMaxConsumptionDate();
+
+
+    // Fetch all months with records (year, month)
+    // Fetch all months with records (year, month)
+    @Query("SELECT DISTINCT EXTRACT(YEAR FROM c.consumptionDate) AS yr, EXTRACT(MONTH FROM c.consumptionDate) AS mn " +
+            "FROM ConsumptionRecord c ORDER BY yr, mn")
+    List<Object[]> findRecordedMonths();
+
+    // Fetch months with records filtered by category
+    @Query("SELECT DISTINCT EXTRACT(YEAR FROM c.consumptionDate) AS yr, EXTRACT(MONTH FROM c.consumptionDate) AS mn " +
+            "FROM ConsumptionRecord c WHERE c.item.category.id = :categoryId ORDER BY yr, mn")
+    List<Object[]> findRecordedMonthsByCategory(@Param("categoryId") Long categoryId);
+
+
 }
