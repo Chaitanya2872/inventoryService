@@ -41,7 +41,14 @@ public class SecurityConfig {
                                 "/error",                 // avoid 403 spam
                                 "/api/health/**",         // public health checks
                                 "/actuator/**",           // Spring Boot actuator
-                                "/api/auth/**"            // login/signup endpoints
+                                "/api/auth/**",           // login/signup endpoints
+                                "/api/items/**",
+                                "/api/analytics/**",
+                                "/api/categories/**",
+                                "/api/upload/**",
+                                "/api/statistics",
+                                "/api/templates/**",
+                                "/api/units/**"
                         ).permitAll()
 
                         // 🔐 Everything else requires authentication
