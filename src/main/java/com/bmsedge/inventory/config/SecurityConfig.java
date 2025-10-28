@@ -23,36 +23,52 @@ public class SecurityConfig {
     private AuthenticationFilter authenticationFilter;
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+                // Enable CORS and disable CSRF for stateless JWT security
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(AbstractHttpConfigurer::disable)
+
+                // Make security stateless since we're using JWT tokens
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+                // Define route-level authorization
                 .authorizeHttpRequests(auth -> auth
-                        // Public endpoints that don't require authentication
-                        .requestMatchers("/api/health/**", "/actuator/**").permitAll()
-                        // Temporarily allow all API endpoints for testing
-                        .requestMatchers("/api/**").permitAll()
-                        // Require authentication for everything else
+                        // 🌐 Public endpoints (no authentication required)
+                        .requestMatchers(
+                                "/",                      // allow Render or root checks
+                                "/error",                 // avoid 403 spam
+                                "/api/health/**",         // public health checks
+                                "/actuator/**",           // Spring Boot actuator
+                                "/api/auth/**"            // login/signup endpoints
+                        ).permitAll()
+
+                        // 🔐 Everything else requires authentication
                         .anyRequest().authenticated()
                 )
+
+                // Add your custom JWT authentication filter
                 .addFilterBefore(authenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
+    /**
+     * CORS configuration allowing cross-origin requests for your APIs.
+     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOriginPatterns(List.of("*"));
+        configuration.setAllowedOriginPatterns(List.of("*")); // for local & deployed clients
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
-        configuration.setAllowCredentials(true);
         configuration.setExposedHeaders(List.of("Authorization"));
+        configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/api/**", configuration);
+        // Apply CORS to all routes (not just /api)
+        source.registerCorsConfiguration("/**", configuration);
         return source;
     }
 }
