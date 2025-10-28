@@ -45,7 +45,10 @@ public interface ConsumptionRecordRepository extends JpaRepository<ConsumptionRe
     /**
      * Find all records within date range
      */
-    List<ConsumptionRecord> findByConsumptionDateBetween(LocalDate startDate, LocalDate endDate);
+    @Query("SELECT cr FROM ConsumptionRecord cr WHERE cr.consumptionDate BETWEEN :start AND :end")
+    List<ConsumptionRecord> findByConsumptionDateBetween(@Param("start") LocalDate startDate,
+                                                         @Param("end") LocalDate endDate);
+
 
     /**
      * Find records by category and date range

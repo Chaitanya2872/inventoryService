@@ -118,6 +118,375 @@ public class AnalyticsController {
     }
 
     /**
+     * SMART INSIGHTS ENDPOINT: AI-Powered Analytics with Anomaly Detection
+     *
+     * This endpoint provides comprehensive intelligent insights including:
+     * - Critical alerts requiring immediate action
+     * - Statistical anomaly detection
+     * - Trend analysis with predictions
+     * - Cost optimization opportunities
+     * - Forecast accuracy assessment
+     * - Seasonal pattern detection
+     * - Inventory health scoring
+     * - Top movers identification
+     * - Predictive stockout warnings
+     * - AI-generated recommendations
+     *
+     * Usage Examples:
+     * - Quick analysis (30 days):    /api/analytics/smart-insights?analysisDepth=quick
+     * - Standard analysis (90 days): /api/analytics/smart-insights?analysisDepth=standard
+     * - Deep analysis (all data):    /api/analytics/smart-insights?analysisDepth=deep
+     * - With category filter:        /api/analytics/smart-insights?categoryId=1
+     * - High confidence only:        /api/analytics/smart-insights?minConfidence=0.85
+     * - Without recommendations:     /api/analytics/smart-insights?includeRecommendations=false
+     *
+     * Response Structure:
+     * {
+     *   "analysisDepth": "standard",
+     *   "analysisPeriod": {...},
+     *   "criticalAlerts": [...],         // Urgent items requiring immediate action
+     *   "anomalies": [...],              // Statistically unusual patterns
+     *   "trendInsights": {...},          // Direction, volatility, interpretation
+     *   "costOpportunities": [...],      // Potential savings opportunities
+     *   "forecastAccuracy": {...},       // Prediction quality metrics
+     *   "seasonalPatterns": {...},       // Time-based patterns
+     *   "inventoryHealthScore": {...},   // Overall inventory status (0-100)
+     *   "topMovers": {...},              // High-impact items
+     *   "predictions": [...],            // Future projections
+     *   "recommendations": [...],        // Prioritized action items
+     *   "summary": {...}                 // Quick statistics
+     * }
+     */
+    @GetMapping("/smart-insights")
+    public ResponseEntity<Map<String, Object>> getSmartInsights(
+            @RequestParam(value = "analysisDepth", defaultValue = "standard") String analysisDepth,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "minConfidence", defaultValue = "0.7") Double minConfidence,
+            @RequestParam(value = "includeRecommendations", defaultValue = "true") Boolean includeRecommendations) {
+
+        try {
+            // Validate parameters
+            if (minConfidence < 0.0 || minConfidence > 1.0) {
+                Map<String, Object> errorResponse = new HashMap<>();
+                errorResponse.put("error", "Invalid minConfidence value");
+                errorResponse.put("message", "minConfidence must be between 0.0 and 1.0");
+                errorResponse.put("providedValue", minConfidence);
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+            }
+
+            if (!analysisDepth.matches("(?i)quick|standard|deep")) {
+                Map<String, Object> errorResponse = new HashMap<>();
+                errorResponse.put("error", "Invalid analysisDepth value");
+                errorResponse.put("message", "analysisDepth must be one of: quick, standard, deep");
+                errorResponse.put("providedValue", analysisDepth);
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+            }
+
+            // Call service method
+            Map<String, Object> insights = analyticsService.getSmartInsights(
+                    analysisDepth,
+                    categoryId,
+                    minConfidence,
+                    includeRecommendations
+            );
+
+            // Add metadata
+            insights.put("apiVersion", "1.0");
+            insights.put("requestedAt", java.time.LocalDateTime.now().toString());
+
+            return ResponseEntity.ok(insights);
+
+        } catch (Exception e) {
+            System.err.println("Error in getSmartInsights endpoint: " + e.getMessage());
+            e.printStackTrace();
+
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error generating smart insights");
+            errorResponse.put("message", e.getMessage());
+            errorResponse.put("timestamp", java.time.LocalDateTime.now().toString());
+            errorResponse.put("parameters", Map.of(
+                    "analysisDepth", analysisDepth,
+                    "categoryId", categoryId != null ? categoryId : "all",
+                    "minConfidence", minConfidence,
+                    "includeRecommendations", includeRecommendations
+            ));
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * SMART INSIGHTS SUMMARY ENDPOINT: Quick overview without detailed breakdowns
+     *
+     * Returns only high-level summary metrics for dashboard widgets
+     * Much faster than full insights when you only need key statistics
+     *
+     * Usage: /api/analytics/smart-insights/summary?categoryId=1
+     */
+    @GetMapping("/smart-insights/summary")
+    public ResponseEntity<Map<String, Object>> getSmartInsightsSummary(
+            @RequestParam(value = "categoryId", required = false) Long categoryId) {
+
+        try {
+            // Get full insights but extract only summary
+            Map<String, Object> fullInsights = analyticsService.getSmartInsights(
+                    "quick",  // Use quick analysis for summary
+                    categoryId,
+                    0.7,
+                    false     // Don't need recommendations for summary
+            );
+
+            // Extract summary data
+            Map<String, Object> summary = new HashMap<>();
+            summary.put("summary", fullInsights.get("summary"));
+            summary.put("inventoryHealthScore", fullInsights.get("inventoryHealthScore"));
+            summary.put("criticalAlertsCount",
+                    ((List<?>) fullInsights.get("criticalAlerts")).size());
+            summary.put("anomaliesCount",
+                    ((List<?>) fullInsights.get("anomalies")).size());
+            summary.put("costOpportunitiesCount",
+                    ((List<?>) fullInsights.get("costOpportunities")).size());
+
+            // Add top 3 critical alerts
+            List<?> criticalAlerts = (List<?>) fullInsights.get("criticalAlerts");
+            summary.put("topAlerts", criticalAlerts.stream().limit(3).collect(Collectors.toList()));
+
+            // Add forecast accuracy
+            summary.put("forecastAccuracy", fullInsights.get("forecastAccuracy"));
+
+            summary.put("generatedAt", java.time.LocalDateTime.now().toString());
+
+            return ResponseEntity.ok(summary);
+
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error generating smart insights summary");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * SMART INSIGHTS RECOMMENDATIONS ENDPOINT: Get only AI recommendations
+     *
+     * Returns prioritized action items without the full analysis
+     * Useful for action dashboards and task lists
+     *
+     * Usage: /api/analytics/smart-insights/recommendations?categoryId=1&minPriority=7
+     */
+    @GetMapping("/smart-insights/recommendations")
+    public ResponseEntity<Map<String, Object>> getSmartRecommendations(
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "minPriority", defaultValue = "1") Integer minPriority,
+            @RequestParam(value = "limit", defaultValue = "10") Integer limit) {
+
+        try {
+            // Get full insights
+            Map<String, Object> fullInsights = analyticsService.getSmartInsights(
+                    "standard",
+                    categoryId,
+                    0.7,
+                    true  // We need recommendations
+            );
+
+            // Extract and filter recommendations
+            List<Map<String, Object>> allRecommendations =
+                    (List<Map<String, Object>>) fullInsights.get("recommendations");
+
+            List<Map<String, Object>> filteredRecommendations = allRecommendations.stream()
+                    .filter(rec -> (Integer) rec.get("priority") >= minPriority)
+                    .limit(limit)
+                    .collect(Collectors.toList());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("recommendations", filteredRecommendations);
+            response.put("totalRecommendations", allRecommendations.size());
+            response.put("filteredCount", filteredRecommendations.size());
+            response.put("filters", Map.of(
+                    "minPriority", minPriority,
+                    "limit", limit,
+                    "categoryId", categoryId != null ? categoryId : "all"
+            ));
+            response.put("generatedAt", java.time.LocalDateTime.now().toString());
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error generating recommendations");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * SMART INSIGHTS ALERTS ENDPOINT: Get only critical alerts
+     *
+     * Returns urgent items requiring immediate attention
+     * Useful for alert dashboards and notification systems
+     *
+     * Usage: /api/analytics/smart-insights/alerts?severity=CRITICAL
+     */
+    @GetMapping("/smart-insights/alerts")
+    public ResponseEntity<Map<String, Object>> getSmartAlerts(
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "severity", required = false) String severity,
+            @RequestParam(value = "limit", defaultValue = "20") Integer limit) {
+
+        try {
+            // Get full insights
+            Map<String, Object> fullInsights = analyticsService.getSmartInsights(
+                    "quick",  // Quick analysis for alerts
+                    categoryId,
+                    0.7,
+                    false
+            );
+
+            // Extract alerts
+            List<Map<String, Object>> allAlerts =
+                    (List<Map<String, Object>>) fullInsights.get("criticalAlerts");
+
+            // Filter by severity if specified
+            List<Map<String, Object>> filteredAlerts = allAlerts;
+            if (severity != null && !severity.trim().isEmpty()) {
+                filteredAlerts = allAlerts.stream()
+                        .filter(alert -> severity.equalsIgnoreCase((String) alert.get("severity")))
+                        .collect(Collectors.toList());
+            }
+
+            // Apply limit
+            filteredAlerts = filteredAlerts.stream().limit(limit).collect(Collectors.toList());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("alerts", filteredAlerts);
+            response.put("totalAlerts", allAlerts.size());
+            response.put("filteredCount", filteredAlerts.size());
+            response.put("criticalCount", allAlerts.stream()
+                    .filter(a -> "CRITICAL".equals(a.get("severity"))).count());
+            response.put("highCount", allAlerts.stream()
+                    .filter(a -> "HIGH".equals(a.get("severity"))).count());
+            response.put("filters", Map.of(
+                    "severity", severity != null ? severity : "all",
+                    "limit", limit,
+                    "categoryId", categoryId != null ? categoryId : "all"
+            ));
+            response.put("generatedAt", java.time.LocalDateTime.now().toString());
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving alerts");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * SMART INSIGHTS ANOMALIES ENDPOINT: Get detected anomalies
+     *
+     * Returns statistically unusual consumption patterns
+     * Useful for investigation and quality control
+     *
+     * Usage: /api/analytics/smart-insights/anomalies?minConfidence=0.85
+     */
+    @GetMapping("/smart-insights/anomalies")
+    public ResponseEntity<Map<String, Object>> getAnomalies(
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "minConfidence", defaultValue = "0.7") Double minConfidence,
+            @RequestParam(value = "limit", defaultValue = "15") Integer limit) {
+
+        try {
+            // Validate confidence
+            if (minConfidence < 0.0 || minConfidence > 1.0) {
+                Map<String, Object> errorResponse = new HashMap<>();
+                errorResponse.put("error", "Invalid minConfidence value");
+                errorResponse.put("message", "minConfidence must be between 0.0 and 1.0");
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+            }
+
+            // Get full insights
+            Map<String, Object> fullInsights = analyticsService.getSmartInsights(
+                    "standard",
+                    categoryId,
+                    minConfidence,
+                    false
+            );
+
+            // Extract anomalies
+            List<Map<String, Object>> anomalies =
+                    (List<Map<String, Object>>) fullInsights.get("anomalies");
+
+            // Apply limit
+            List<Map<String, Object>> limitedAnomalies =
+                    anomalies.stream().limit(limit).collect(Collectors.toList());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("anomalies", limitedAnomalies);
+            response.put("totalAnomalies", anomalies.size());
+            response.put("returnedCount", limitedAnomalies.size());
+            response.put("averageConfidence", anomalies.stream()
+                    .mapToDouble(a -> (Double) a.get("confidence"))
+                    .average()
+                    .orElse(0.0));
+            response.put("filters", Map.of(
+                    "minConfidence", minConfidence,
+                    "limit", limit,
+                    "categoryId", categoryId != null ? categoryId : "all"
+            ));
+            response.put("generatedAt", java.time.LocalDateTime.now().toString());
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving anomalies");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
+     * SMART INSIGHTS HEALTH CHECK ENDPOINT: Quick inventory health status
+     *
+     * Returns only the inventory health score and breakdown
+     * Fastest endpoint for health monitoring
+     *
+     * Usage: /api/analytics/smart-insights/health
+     */
+    @GetMapping("/smart-insights/health")
+    public ResponseEntity<Map<String, Object>> getInventoryHealth(
+            @RequestParam(value = "categoryId", required = false) Long categoryId) {
+
+        try {
+            // Get full insights
+            Map<String, Object> fullInsights = analyticsService.getSmartInsights(
+                    "quick",
+                    categoryId,
+                    0.7,
+                    false
+            );
+
+            // Extract health score
+            Map<String, Object> healthScore =
+                    (Map<String, Object>) fullInsights.get("inventoryHealthScore");
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("healthScore", healthScore);
+            response.put("categoryFilter", categoryId != null ? categoryId : "all");
+            response.put("generatedAt", java.time.LocalDateTime.now().toString());
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Error retrieving inventory health");
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
      * FIXED ENDPOINT: Get cost distribution by category (for donut chart)
      * This now properly handles data from January 2025 and provides actual costs
      * Usage: /api/analytics/cost-distribution?period=monthly&startDate=2025-01-01&endDate=2025-07-31

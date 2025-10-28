@@ -75,12 +75,12 @@ public class ConsumptionUploadService {
 
         for (ConsumptionRecordRequest request : requests) {
             try {
-                // Find item by name and SKU
-                Optional<Item> itemOpt = findItem(request.itemName, request.itemSku);
+                // Find item by name
+                Optional<Item> itemOpt = findItem(request.itemName, request.category);
 
                 if (!itemOpt.isPresent()) {
-                    String itemIdentifier = request.itemSku != null && !request.itemSku.isEmpty()
-                            ? request.itemName + " (" + request.itemSku + ")"
+                    String itemIdentifier = request.category != null
+                            ? request.category + " - " + request.itemName
                             : request.itemName;
                     missingItems.add(itemIdentifier);
                     continue;
@@ -118,26 +118,11 @@ public class ConsumptionUploadService {
                 if (request.closingStock != null) {
                     record.setClosingStock(request.closingStock);
                 }
-                if (request.department != null) {
-                    record.setDepartment(request.department);
-                }
-                if (request.costCenter != null) {
-                    record.setCostCenter(request.costCenter);
-                }
-                if (request.employeeCount != null) {
-                    record.setEmployeeCount(request.employeeCount);
-                }
-                if (request.notes != null) {
-                    record.setNotes(request.notes);
-                }
 
-                // Save record (this will trigger statistics updates via database triggers or listeners)
+                // Save record
                 record = consumptionRecordRepository.save(record);
 
-                // DON'T add entity directly - convert immediately to avoid circular refs
-                // createdRecords.add(record);  ← This causes circular reference!
-
-                // Instead, convert to simple map right away
+                // Convert to simple map
                 Map<String, Object> simpleRecord = toSimpleResponse(record);
                 createdRecords.add(simpleRecord);
 
@@ -149,13 +134,13 @@ public class ConsumptionUploadService {
 
         // Build warnings for missing items
         if (!missingItems.isEmpty()) {
-            warnings.add("⚠️  ITEMS NOT FOUND - Create these items first using /api/upload/items:");
+            warnings.add("⚠️  ITEMS NOT FOUND - Create these items first:");
             warnings.addAll(missingItems);
         }
 
         result.put("success", !createdRecords.isEmpty() || missingItems.isEmpty());
         result.put("recordsCreated", createdRecords.size());
-        result.put("records", createdRecords);  // Already simple maps, no conversion needed
+        result.put("records", createdRecords);
         result.put("creationErrors", creationErrors);
         result.put("warnings", warnings);
         result.put("missingItemsCount", missingItems.size());
@@ -176,7 +161,7 @@ public class ConsumptionUploadService {
     }
 
     /**
-     * Parse consumption Excel file with flexible structure detection
+     * Parse consumption Excel file - supports both TALL and WIDE formats
      */
     private Map<String, Object> parseConsumptionExcel(MultipartFile file, List<String> errors) throws IOException {
         Map<String, Object> result = new HashMap<>();
@@ -197,30 +182,24 @@ public class ConsumptionUploadService {
                 }
 
                 try {
-                    SheetStructure structure = analyzeConsumptionSheet(sheet);
+                    SheetStructure structure = analyzeSheetStructure(sheet);
 
                     if (!structure.isValid) {
                         errors.add("Sheet '" + sheetName + "': " + structure.errorMessage);
                         continue;
                     }
 
-                    logger.info("  Detected columns: {}", structure.columnMap.keySet());
+                    logger.info("  Format detected: {} with {} columns", structure.type, structure.columnMap.size());
 
-                    for (int rowIdx = structure.dataStartRow; rowIdx <= sheet.getLastRowNum(); rowIdx++) {
-                        Row row = sheet.getRow(rowIdx);
-                        if (row == null || isRowEmpty(row)) continue;
-
-                        try {
-                            ConsumptionRecordRequest record = parseConsumptionRow(row, structure, sheetName);
-                            if (record != null) {
-                                allRecords.add(record);
-                                totalRows++;
-                            }
-                        } catch (Exception e) {
-                            errors.add(String.format("Sheet '%s' Row %d: %s",
-                                    sheetName, rowIdx + 1, e.getMessage()));
-                        }
+                    if ("WIDE".equals(structure.type)) {
+                        // Wide format: one row per item, dates as columns
+                        allRecords.addAll(parseWideFormat(sheet, structure, sheetName, errors));
+                    } else {
+                        // Tall format: one row per item per date
+                        allRecords.addAll(parseTallFormat(sheet, structure, sheetName, errors));
                     }
+
+                    totalRows += (sheet.getLastRowNum() - structure.dataStartRow + 1);
 
                 } catch (Exception e) {
                     errors.add("Error processing sheet '" + sheetName + "': " + e.getMessage());
@@ -239,331 +218,314 @@ public class ConsumptionUploadService {
     }
 
     /**
-     * Analyze sheet structure for consumption data
+     * Analyze sheet structure - detect WIDE or TALL format
      */
-    private SheetStructure analyzeConsumptionSheet(Sheet sheet) {
+    private SheetStructure analyzeSheetStructure(Sheet sheet) {
         SheetStructure structure = new SheetStructure();
 
+        // Check first 5 rows for headers
         for (int rowIdx = 0; rowIdx < Math.min(5, sheet.getPhysicalNumberOfRows()); rowIdx++) {
             Row row = sheet.getRow(rowIdx);
             if (row == null) continue;
 
-            int headerScore = 0;
-            Map<String, Integer> columnMap = new HashMap<>();
-
-            for (Cell cell : row) {
-                String value = getCellValueAsString(cell);
-                if (value == null || value.trim().isEmpty()) continue;
-
-                String lower = value.toLowerCase().trim();
-
-                // Item name detection
-                if (lower.equals("item") || lower.equals("item_name") || lower.equals("itemname") ||
-                        (lower.contains("item") && (lower.contains("name") || lower.contains("description")))) {
-                    if (!lower.contains("sku")) {
-                        columnMap.put("item", cell.getColumnIndex());
-                        headerScore += 3;
-                    }
-                }
-
-                // SKU detection
-                if (lower.equals("sku") || lower.equals("item_sku") || lower.equals("itemsku")) {
-                    columnMap.put("sku", cell.getColumnIndex());
-                    headerScore += 2;
-                }
-
-                // Date detection (single column)
-                if (lower.equals("date") || lower.contains("consumption") && lower.contains("date") ||
-                        lower.equals("consumption_date") || lower.equals("consumptiondate")) {
-                    columnMap.put("date", cell.getColumnIndex());
-                    headerScore += 3;
-                }
-
-                // Date detection (split columns - day/month/year)
-                if (lower.equals("day") || lower.equals("dd")) {
-                    columnMap.put("day", cell.getColumnIndex());
-                    headerScore += 1;
-                }
-                if (lower.equals("month") || lower.equals("mm")) {
-                    columnMap.put("month", cell.getColumnIndex());
-                    headerScore += 1;
-                }
-                if (lower.equals("year") || lower.equals("yyyy")) {
-                    columnMap.put("year", cell.getColumnIndex());
-                    headerScore += 1;
-                }
-
-                // Opening stock
-                if (lower.contains("opening") && lower.contains("stock")) {
-                    columnMap.put("openingStock", cell.getColumnIndex());
-                    headerScore += 2;
-                }
-
-                // Received quantity
-                if (lower.contains("received") || (lower.contains("receipt") && lower.contains("qty"))) {
-                    columnMap.put("receivedQuantity", cell.getColumnIndex());
-                    headerScore += 2;
-                }
-
-                // Consumed quantity
-                if ((lower.contains("consumed") || lower.contains("consumption")) &&
-                        (lower.contains("qty") || lower.contains("quantity"))) {
-                    columnMap.put("consumedQuantity", cell.getColumnIndex());
-                    headerScore += 3;
-                } else if (lower.equals("consumed") || lower.equals("consumption") || lower.equals("quantity")) {
-                    columnMap.put("consumedQuantity", cell.getColumnIndex());
-                    headerScore += 3;
-                }
-
-                // Closing stock
-                if (lower.contains("closing") && lower.contains("stock")) {
-                    columnMap.put("closingStock", cell.getColumnIndex());
-                    headerScore += 2;
-                }
-
-                // Department
-                if (lower.equals("department") || lower.equals("dept")) {
-                    columnMap.put("department", cell.getColumnIndex());
-                    headerScore += 1;
-                }
-
-                // Cost center
-                if (lower.contains("cost") && lower.contains("center")) {
-                    columnMap.put("costCenter", cell.getColumnIndex());
-                    headerScore += 1;
-                }
-
-                // Employee count
-                if (lower.contains("employee") && lower.contains("count")) {
-                    columnMap.put("employeeCount", cell.getColumnIndex());
-                    headerScore += 1;
-                }
-
-                // Notes
-                if (lower.equals("notes") || lower.equals("remarks") || lower.equals("comments")) {
-                    columnMap.put("notes", cell.getColumnIndex());
-                    headerScore += 1;
-                }
+            // Try detecting WIDE format first
+            SheetStructure wideStructure = detectWideFormat(row, rowIdx, sheet);
+            if (wideStructure.isValid) {
+                return wideStructure;
             }
 
-            // Valid if we have item, date (or day/month/year), and consumed quantity
-            boolean hasDate = columnMap.containsKey("date") ||
-                    (columnMap.containsKey("day") && columnMap.containsKey("month") && columnMap.containsKey("year"));
-
-            if (headerScore >= 6 && columnMap.containsKey("item") &&
-                    hasDate && columnMap.containsKey("consumedQuantity")) {
-                structure.isValid = true;
-                structure.type = "HEADER_BASED";
-                structure.headerRow = rowIdx;
-                structure.dataStartRow = rowIdx + 1;
-                structure.columnMap = columnMap;
-                return structure;
+            // Try detecting TALL format
+            SheetStructure tallStructure = detectTallFormat(row, rowIdx);
+            if (tallStructure.isValid) {
+                return tallStructure;
             }
         }
 
         structure.isValid = false;
-        structure.errorMessage = "Could not detect valid consumption structure. Required: Item Name, Date (or day/month/year), Consumed Quantity";
+        structure.errorMessage = "Could not detect valid format. Supports: " +
+                "WIDE (Category|Item|UOM|Opening|Received|Date columns|Closing) or " +
+                "TALL (Item Name|Date|Consumed Quantity)";
         return structure;
     }
 
     /**
-     * Parse a consumption record row
+     * Detect WIDE format structure
      */
-    private ConsumptionRecordRequest parseConsumptionRow(Row row, SheetStructure structure, String sheetName) {
-        String itemName = getColumnValue(row, structure.columnMap, "item");
-        String itemSku = getColumnValue(row, structure.columnMap, "sku");
+    private SheetStructure detectWideFormat(Row row, int rowIdx, Sheet sheet) {
+        SheetStructure structure = new SheetStructure();
+        Map<String, Integer> columnMap = new HashMap<>();
+        List<DateColumn> dateColumns = new ArrayList<>();
+        int headerScore = 0;
 
-        // Handle date - either single column or split (day/month/year)
-        LocalDate date = null;
-        if (structure.columnMap.containsKey("date")) {
-            date = getColumnValueAsDate(row, structure.columnMap, "date");
-        } else if (structure.columnMap.containsKey("day") &&
-                structure.columnMap.containsKey("month") &&
-                structure.columnMap.containsKey("year")) {
-            date = parseSplitDate(row, structure.columnMap);
+        for (Cell cell : row) {
+            String value = getCellValueAsString(cell);
+            if (value == null || value.trim().isEmpty()) continue;
+
+            String lower = value.toLowerCase().trim();
+            int colIdx = cell.getColumnIndex();
+
+            // Fixed columns detection
+            if (lower.equals("category") || lower.equals("cat")) {
+                columnMap.put("category", colIdx);
+                headerScore += 2;
+            }
+            if (lower.equals("item") || lower.equals("item name") || lower.equals("item_name") ||
+                    lower.equals("itemname") || lower.contains("item") && lower.contains("name")) {
+                columnMap.put("item", colIdx);
+                headerScore += 3;
+            }
+            if (lower.equals("uom") || lower.equals("unit")) {
+                columnMap.put("uom", colIdx);
+                headerScore += 1;
+            }
+            if (lower.contains("opening") && lower.contains("stock")) {
+                columnMap.put("openingStock", colIdx);
+                headerScore += 2;
+            }
+            if (lower.contains("received") || lower.contains("total") && lower.contains("received")) {
+                columnMap.put("receivedQuantity", colIdx);
+                headerScore += 2;
+            }
+            if (lower.contains("closing") && lower.contains("stock")) {
+                columnMap.put("closingStock", colIdx);
+                headerScore += 2;
+            }
+
+            // Date column detection (DD/MM/YYYY or similar)
+            LocalDate parsedDate = parseDateString(value);
+            if (parsedDate != null) {
+                DateColumn dc = new DateColumn();
+                dc.columnIndex = colIdx;
+                dc.date = parsedDate;
+                dateColumns.add(dc);
+                headerScore += 1;
+            }
         }
 
-        BigDecimal consumedQty = getColumnValueAsNumber(row, structure.columnMap, "consumedQuantity");
+        // Valid WIDE format if we have: item name, at least 3 date columns
+        if (headerScore >= 8 && columnMap.containsKey("item") && dateColumns.size() >= 3) {
+            structure.isValid = true;
+            structure.type = "WIDE";
+            structure.headerRow = rowIdx;
+            structure.dataStartRow = rowIdx + 1;
+            structure.columnMap = columnMap;
+            structure.dateColumns = dateColumns;
 
-        // Skip if essential fields are missing
-        if ((itemName == null || itemName.trim().isEmpty()) || date == null) {
-            return null;
+            logger.info("  WIDE format detected: {} fixed columns, {} date columns",
+                    columnMap.size(), dateColumns.size());
+            return structure;
         }
 
-        // Skip total rows
-        if (itemName.toLowerCase().contains("total")) return null;
-
-        ConsumptionRecordRequest request = new ConsumptionRecordRequest();
-        request.itemName = itemName.trim();
-        request.itemSku = itemSku != null ? itemSku.trim() : null;
-        request.consumptionDate = date;
-        request.consumedQuantity = consumedQty != null ? consumedQty : BigDecimal.ZERO;
-        request.openingStock = getColumnValueAsNumber(row, structure.columnMap, "openingStock");
-        request.receivedQuantity = getColumnValueAsNumber(row, structure.columnMap, "receivedQuantity");
-        request.closingStock = getColumnValueAsNumber(row, structure.columnMap, "closingStock");
-        request.department = getColumnValue(row, structure.columnMap, "department");
-        request.costCenter = getColumnValue(row, structure.columnMap, "costCenter");
-
-        BigDecimal empCount = getColumnValueAsNumber(row, structure.columnMap, "employeeCount");
-        request.employeeCount = empCount != null ? empCount.intValue() : null;
-
-        request.notes = getColumnValue(row, structure.columnMap, "notes");
-
-        return request;
+        structure.isValid = false;
+        return structure;
     }
 
     /**
-     * Parse date from split day/month/year columns
+     * Detect TALL format structure
      */
-    private LocalDate parseSplitDate(Row row, Map<String, Integer> columnMap) {
-        try {
-            String dayStr = getColumnValue(row, columnMap, "day");
-            String monthStr = getColumnValue(row, columnMap, "month");
-            String yearStr = getColumnValue(row, columnMap, "year");
+    private SheetStructure detectTallFormat(Row row, int rowIdx) {
+        SheetStructure structure = new SheetStructure();
+        Map<String, Integer> columnMap = new HashMap<>();
+        int headerScore = 0;
 
-            if (dayStr == null || monthStr == null || yearStr == null) {
-                return null;
+        for (Cell cell : row) {
+            String value = getCellValueAsString(cell);
+            if (value == null || value.trim().isEmpty()) continue;
+
+            String lower = value.toLowerCase().trim();
+
+            // Item name
+            if (lower.equals("item") || lower.equals("item_name") || lower.equals("itemname") ||
+                    (lower.contains("item") && (lower.contains("name") || lower.contains("description")))) {
+                if (!lower.contains("sku")) {
+                    columnMap.put("item", cell.getColumnIndex());
+                    headerScore += 3;
+                }
             }
 
-            // Try parsing dayStr as a full date first (e.g., "2025-01-02")
-            if (dayStr.contains("-") || dayStr.contains("/")) {
-                return parseStringDate(dayStr);
+            // Date
+            if (lower.equals("date") || lower.contains("consumption") && lower.contains("date")) {
+                columnMap.put("date", cell.getColumnIndex());
+                headerScore += 3;
             }
 
-            // Otherwise parse as separate components
-            int day = Integer.parseInt(dayStr.trim());
-            int year = Integer.parseInt(yearStr.trim());
-
-            // Parse month (can be numeric or text like "Jan")
-            int month;
-            if (monthStr.matches("\\d+")) {
-                month = Integer.parseInt(monthStr.trim());
-            } else {
-                // Text month like "Jan", "January"
-                month = parseMonthName(monthStr.trim());
+            // Consumed quantity
+            if ((lower.contains("consumed") || lower.contains("consumption")) &&
+                    (lower.contains("qty") || lower.contains("quantity"))) {
+                columnMap.put("consumedQuantity", cell.getColumnIndex());
+                headerScore += 3;
             }
 
-            return LocalDate.of(year, month, day);
-        } catch (Exception e) {
-            logger.warn("Failed to parse split date: {}", e.getMessage());
-            return null;
+            // Optional columns
+            if (lower.contains("opening") && lower.contains("stock")) {
+                columnMap.put("openingStock", cell.getColumnIndex());
+                headerScore += 1;
+            }
+            if (lower.contains("received")) {
+                columnMap.put("receivedQuantity", cell.getColumnIndex());
+                headerScore += 1;
+            }
+            if (lower.contains("closing") && lower.contains("stock")) {
+                columnMap.put("closingStock", cell.getColumnIndex());
+                headerScore += 1;
+            }
         }
+
+        if (headerScore >= 6 && columnMap.containsKey("item") &&
+                columnMap.containsKey("date") && columnMap.containsKey("consumedQuantity")) {
+            structure.isValid = true;
+            structure.type = "TALL";
+            structure.headerRow = rowIdx;
+            structure.dataStartRow = rowIdx + 1;
+            structure.columnMap = columnMap;
+            return structure;
+        }
+
+        structure.isValid = false;
+        return structure;
     }
 
     /**
-     * Parse month name to number (Jan=1, Feb=2, etc.)
+     * Parse WIDE format data
      */
-    private int parseMonthName(String monthStr) {
-        String lower = monthStr.toLowerCase();
-        if (lower.startsWith("jan")) return 1;
-        if (lower.startsWith("feb")) return 2;
-        if (lower.startsWith("mar")) return 3;
-        if (lower.startsWith("apr")) return 4;
-        if (lower.startsWith("may")) return 5;
-        if (lower.startsWith("jun")) return 6;
-        if (lower.startsWith("jul")) return 7;
-        if (lower.startsWith("aug")) return 8;
-        if (lower.startsWith("sep")) return 9;
-        if (lower.startsWith("oct")) return 10;
-        if (lower.startsWith("nov")) return 11;
-        if (lower.startsWith("dec")) return 12;
-        throw new IllegalArgumentException("Invalid month name: " + monthStr);
+    private List<ConsumptionRecordRequest> parseWideFormat(Sheet sheet, SheetStructure structure,
+                                                           String sheetName, List<String> errors) {
+        List<ConsumptionRecordRequest> records = new ArrayList<>();
+
+        for (int rowIdx = structure.dataStartRow; rowIdx <= sheet.getLastRowNum(); rowIdx++) {
+            Row row = sheet.getRow(rowIdx);
+            if (row == null || isRowEmpty(row)) continue;
+
+            try {
+                String category = getColumnValue(row, structure.columnMap, "category");
+                String itemName = getColumnValue(row, structure.columnMap, "item");
+
+                if (itemName == null || itemName.trim().isEmpty()) continue;
+                if (itemName.toLowerCase().contains("total")) continue;
+
+                BigDecimal openingStock = getColumnValueAsNumber(row, structure.columnMap, "openingStock");
+                BigDecimal receivedQty = getColumnValueAsNumber(row, structure.columnMap, "receivedQuantity");
+                BigDecimal closingStock = getColumnValueAsNumber(row, structure.columnMap, "closingStock");
+
+                // Create one record per date column
+                for (DateColumn dateCol : structure.dateColumns) {
+                    Cell cell = row.getCell(dateCol.columnIndex);
+                    BigDecimal consumed = getCellValueAsBigDecimal(cell);
+
+                    // Skip if no consumption or zero
+                    if (consumed == null || consumed.compareTo(BigDecimal.ZERO) == 0) {
+                        continue;
+                    }
+
+                    ConsumptionRecordRequest request = new ConsumptionRecordRequest();
+                    request.category = category;
+                    request.itemName = itemName.trim();
+                    request.consumptionDate = dateCol.date;
+                    request.consumedQuantity = consumed;
+                    request.openingStock = openingStock;
+                    request.receivedQuantity = receivedQty;
+                    request.closingStock = closingStock;
+
+                    records.add(request);
+                }
+
+            } catch (Exception e) {
+                errors.add(String.format("Sheet '%s' Row %d: %s", sheetName, rowIdx + 1, e.getMessage()));
+            }
+        }
+
+        return records;
     }
 
     /**
-     * Find item by name and SKU
+     * Parse TALL format data
      */
-    private Optional<Item> findItem(String itemName, String itemSku) {
-        if (itemSku != null && !itemSku.isEmpty()) {
-            // Search by name + SKU
-            return itemRepository.findByItemNameAndItemSku(itemName, itemSku);
-        } else {
-            // Search by name only (find first match with null SKU)
-            List<Item> items = itemRepository.findByItemNameContainingIgnoreCase(itemName);
+    private List<ConsumptionRecordRequest> parseTallFormat(Sheet sheet, SheetStructure structure,
+                                                           String sheetName, List<String> errors) {
+        List<ConsumptionRecordRequest> records = new ArrayList<>();
+
+        for (int rowIdx = structure.dataStartRow; rowIdx <= sheet.getLastRowNum(); rowIdx++) {
+            Row row = sheet.getRow(rowIdx);
+            if (row == null || isRowEmpty(row)) continue;
+
+            try {
+                String itemName = getColumnValue(row, structure.columnMap, "item");
+                LocalDate date = getColumnValueAsDate(row, structure.columnMap, "date");
+                BigDecimal consumedQty = getColumnValueAsNumber(row, structure.columnMap, "consumedQuantity");
+
+                if (itemName == null || itemName.trim().isEmpty() || date == null) continue;
+                if (itemName.toLowerCase().contains("total")) continue;
+
+                ConsumptionRecordRequest request = new ConsumptionRecordRequest();
+                request.itemName = itemName.trim();
+                request.consumptionDate = date;
+                request.consumedQuantity = consumedQty != null ? consumedQty : BigDecimal.ZERO;
+                request.openingStock = getColumnValueAsNumber(row, structure.columnMap, "openingStock");
+                request.receivedQuantity = getColumnValueAsNumber(row, structure.columnMap, "receivedQuantity");
+                request.closingStock = getColumnValueAsNumber(row, structure.columnMap, "closingStock");
+
+                records.add(request);
+
+            } catch (Exception e) {
+                errors.add(String.format("Sheet '%s' Row %d: %s", sheetName, rowIdx + 1, e.getMessage()));
+            }
+        }
+
+        return records;
+    }
+
+    /**
+     * Find item by name and optional category
+     */
+    private Optional<Item> findItem(String itemName, String category) {
+        List<Item> items = itemRepository.findByItemNameContainingIgnoreCase(itemName);
+
+        // Exact match first
+        Optional<Item> exactMatch = items.stream()
+                .filter(item -> item.getItemName().equalsIgnoreCase(itemName))
+                .findFirst();
+
+        if (exactMatch.isPresent()) {
+            return exactMatch;
+        }
+
+        // If category provided, try matching with category
+        if (category != null && !category.isEmpty()) {
             return items.stream()
-                    .filter(item -> item.getItemName().equalsIgnoreCase(itemName))
-                    .filter(item -> item.getItemSku() == null || item.getItemSku().isEmpty())
+                    .filter(item -> item.getCategory() != null &&
+                            item.getCategory().getCategoryName().equalsIgnoreCase(category))
                     .findFirst();
         }
+
+        return items.isEmpty() ? Optional.empty() : Optional.of(items.get(0));
     }
 
     /**
-     * Validate consumption file without importing
+     * Parse date string in various formats
      */
-    public Map<String, Object> validateConsumptionFile(MultipartFile file) throws IOException {
-        Map<String, Object> validation = new HashMap<>();
-        List<String> errors = new ArrayList<>();
-        List<String> warnings = new ArrayList<>();
+    private LocalDate parseDateString(String dateStr) {
+        if (dateStr == null || dateStr.trim().isEmpty()) return null;
 
-        Map<String, Object> parseResult = parseConsumptionExcel(file, errors);
-        List<ConsumptionRecordRequest> requests = (List<ConsumptionRecordRequest>) parseResult.get("records");
+        String[] patterns = {
+                "dd/MM/yyyy",
+                "d/M/yyyy",
+                "yyyy-MM-dd",
+                "dd-MM-yyyy",
+                "MM/dd/yyyy"
+        };
 
-        Set<String> missingItems = new LinkedHashSet<>();
-        int validRecords = 0;
-
-        for (ConsumptionRecordRequest request : requests) {
-            Optional<Item> itemOpt = findItem(request.itemName, request.itemSku);
-            if (itemOpt.isPresent()) {
-                validRecords++;
-            } else {
-                String itemIdentifier = request.itemSku != null && !request.itemSku.isEmpty()
-                        ? request.itemName + " (" + request.itemSku + ")"
-                        : request.itemName;
-                missingItems.add(itemIdentifier);
+        for (String pattern : patterns) {
+            try {
+                return LocalDate.parse(dateStr, java.time.format.DateTimeFormatter.ofPattern(pattern));
+            } catch (Exception ignored) {
             }
         }
 
-        if (!missingItems.isEmpty()) {
-            warnings.add("Missing items (create these first):");
-            warnings.addAll(missingItems);
-        }
-
-        validation.put("valid", errors.isEmpty() && !requests.isEmpty());
-        validation.put("totalRecords", requests.size());
-        validation.put("validRecords", validRecords);
-        validation.put("missingItems", new ArrayList<>(missingItems));
-        validation.put("parseErrors", errors);
-        validation.put("warnings", warnings);
-        validation.put("message", String.format(
-                "Found %d records. %d valid, %d items missing.",
-                requests.size(), validRecords, missingItems.size()
-        ));
-
-        return validation;
+        return null;
     }
 
     /**
-     * Get upload template information
-     */
-    public Map<String, Object> getConsumptionTemplate() {
-        Map<String, Object> template = new HashMap<>();
-        template.put("format", "Excel (.xlsx) - Flexible structure");
-        template.put("requiredColumns", new String[]{
-                "Item Name (or similar)",
-                "Consumption Date",
-                "Consumed Quantity"
-        });
-        template.put("optionalColumns", new String[]{
-                "Item SKU (for variants)",
-                "Opening Stock",
-                "Received Quantity",
-                "Closing Stock",
-                "Department",
-                "Cost Center",
-                "Employee Count",
-                "Notes"
-        });
-        template.put("notes", new String[]{
-                "Items must exist before importing consumption",
-                "Items identified by: Name + SKU (if provided)",
-                "Missing items will be listed in warnings",
-                "Automatically triggers statistics and correlations"
-        });
-        return template;
-    }
-
-    /**
-     * Convert ConsumptionRecord to simple response (no circular references)
+     * Convert ConsumptionRecord to simple response
      */
     private Map<String, Object> toSimpleResponse(ConsumptionRecord record) {
         Map<String, Object> response = new HashMap<>();
@@ -573,21 +535,13 @@ public class ConsumptionUploadService {
         response.put("receivedQuantity", record.getReceivedQuantity());
         response.put("consumedQuantity", record.getConsumedQuantity());
         response.put("closingStock", record.getClosingStock());
-        response.put("department", record.getDepartment());
-        response.put("costCenter", record.getCostCenter());
-        response.put("employeeCount", record.getEmployeeCount());
-        response.put("notes", record.getNotes());
 
-        // Add item info (simplified, no circular references)
         if (record.getItem() != null) {
             Map<String, Object> itemInfo = new HashMap<>();
             itemInfo.put("id", record.getItem().getId());
             itemInfo.put("itemName", record.getItem().getItemName());
-            itemInfo.put("itemSku", record.getItem().getItemSku());
             itemInfo.put("currentQuantity", record.getItem().getCurrentQuantity());
-            itemInfo.put("unitOfMeasurement", record.getItem().getUnitOfMeasurement());
 
-            // Add category info (without items list)
             if (record.getItem().getCategory() != null) {
                 Map<String, Object> categoryInfo = new HashMap<>();
                 categoryInfo.put("id", record.getItem().getCategory().getId());
@@ -601,7 +555,7 @@ public class ConsumptionUploadService {
         return response;
     }
 
-    // ==================== UTILITY METHODS ====================
+    // ==================== UTILITY CLASSES ====================
 
     private static class SheetStructure {
         boolean isValid = false;
@@ -609,22 +563,26 @@ public class ConsumptionUploadService {
         int headerRow = -1;
         int dataStartRow = 0;
         Map<String, Integer> columnMap = new HashMap<>();
+        List<DateColumn> dateColumns = new ArrayList<>();
         String errorMessage = "";
     }
 
+    private static class DateColumn {
+        int columnIndex;
+        LocalDate date;
+    }
+
     private static class ConsumptionRecordRequest {
+        String category;
         String itemName;
-        String itemSku;
         LocalDate consumptionDate;
         BigDecimal openingStock;
         BigDecimal receivedQuantity;
         BigDecimal consumedQuantity;
         BigDecimal closingStock;
-        String department;
-        String costCenter;
-        Integer employeeCount;
-        String notes;
     }
+
+    // ==================== UTILITY METHODS ====================
 
     private String getColumnValue(Row row, Map<String, Integer> columnMap, String columnName) {
         Integer colIdx = columnMap.get(columnName);
@@ -708,11 +666,10 @@ public class ConsumptionUploadService {
                     if (DateUtil.isCellDateFormatted(cell)) {
                         return cell.getLocalDateTimeCellValue().toLocalDate();
                     }
-                    // Try to parse as Excel date number
                     Date date = DateUtil.getJavaDate(cell.getNumericCellValue());
                     return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
                 case STRING:
-                    return parseStringDate(cell.getStringCellValue().trim());
+                    return parseDateString(cell.getStringCellValue().trim());
                 default:
                     return null;
             }
@@ -720,28 +677,6 @@ public class ConsumptionUploadService {
             logger.warn("Failed to parse date: {}", e.getMessage());
             return null;
         }
-    }
-
-    private LocalDate parseStringDate(String dateStr) {
-        if (dateStr == null || dateStr.isEmpty()) return null;
-
-        // Try common date formats
-        String[] patterns = {
-                "yyyy-MM-dd",
-                "dd/MM/yyyy",
-                "MM/dd/yyyy",
-                "dd-MM-yyyy",
-                "yyyy/MM/dd"
-        };
-
-        for (String pattern : patterns) {
-            try {
-                return LocalDate.parse(dateStr, java.time.format.DateTimeFormatter.ofPattern(pattern));
-            } catch (Exception ignored) {
-            }
-        }
-
-        return null;
     }
 
     private boolean isRowEmpty(Row row) {
@@ -754,5 +689,58 @@ public class ConsumptionUploadService {
             }
         }
         return true;
+    }
+
+    public Map<String, Object> validateConsumptionFile(MultipartFile file) throws IOException {
+        Map<String, Object> validation = new HashMap<>();
+        List<String> errors = new ArrayList<>();
+
+        Map<String, Object> parseResult = parseConsumptionExcel(file, errors);
+        List<ConsumptionRecordRequest> requests = (List<ConsumptionRecordRequest>) parseResult.get("records");
+
+        Set<String> missingItems = new LinkedHashSet<>();
+        int validRecords = 0;
+
+        for (ConsumptionRecordRequest request : requests) {
+            Optional<Item> itemOpt = findItem(request.itemName, request.category);
+            if (itemOpt.isPresent()) {
+                validRecords++;
+            } else {
+                String itemIdentifier = request.category != null
+                        ? request.category + " - " + request.itemName
+                        : request.itemName;
+                missingItems.add(itemIdentifier);
+            }
+        }
+
+        validation.put("valid", errors.isEmpty() && !requests.isEmpty());
+        validation.put("totalRecords", requests.size());
+        validation.put("validRecords", validRecords);
+        validation.put("missingItems", new ArrayList<>(missingItems));
+        validation.put("parseErrors", errors);
+        validation.put("message", String.format(
+                "Found %d records. %d valid, %d items missing.",
+                requests.size(), validRecords, missingItems.size()
+        ));
+
+        return validation;
+    }
+
+    public Map<String, Object> getConsumptionTemplate() {
+        Map<String, Object> template = new HashMap<>();
+        template.put("format", "Excel (.xlsx) - Supports WIDE and TALL formats");
+        template.put("wideFormat", new String[]{
+                "Category | Item Name | UOM | Opening Stock | Total Received | [Date columns] | Closing Stock"
+        });
+        template.put("tallFormat", new String[]{
+                "Item Name | Date | Consumed Quantity | Opening Stock | Received Quantity | Closing Stock"
+        });
+        template.put("notes", new String[]{
+                "WIDE format: One row per item, dates as column headers (DD/MM/YYYY)",
+                "TALL format: One row per item per date",
+                "Items must exist before importing consumption",
+                "Date columns with zero or empty consumption are skipped"
+        });
+        return template;
     }
 }

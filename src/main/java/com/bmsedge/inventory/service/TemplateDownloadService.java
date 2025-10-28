@@ -774,7 +774,7 @@ public class TemplateDownloadService {
         style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
         style.setAlignment(HorizontalAlignment.LEFT);
         style.setVerticalAlignment(VerticalAlignment.CENTER);
-        style.setLocked(true);
+        style.setLocked(false);
         return style;
     }
 
