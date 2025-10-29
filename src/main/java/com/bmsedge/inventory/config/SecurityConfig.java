@@ -48,7 +48,8 @@ public class SecurityConfig {
                                 "/api/upload/**",
                                 "/api/statistics",
                                 "/api/templates/**",
-                                "/api/units/**"
+                                "/api/units/**",
+                                "https://iotiq-edgewb-ksnq.vercel.app/**"
                         ).permitAll()
 
                         // 🔐 Everything else requires authentication
