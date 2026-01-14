@@ -30,7 +30,7 @@ spring:
 eureka:
   client:
     service-url:
-      defaultZone: http://45.79.121.181:8761/eureka/  # FIXED: Use actual server IP
+      defaultZone: http://eureka-server:8761/eureka/  # FIXED: Use actual server IP
     register-with-eureka: true
     fetch-registry: true
   instance:
