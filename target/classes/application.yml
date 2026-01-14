@@ -3,18 +3,24 @@ server:
 
 spring:
   application:
-    name: inventory-service  # This should match your service name
+    name: inventory-service
 
   datasource:
-    url: jdbc:postgresql://dpg-d3m9lk95pdvs73b2mtd0-a.singapore-postgres.render.com:5432/bms_inv
-    username: tester4723
-    password: UAYWY4J4c05TGlmBrmet50TV6oxUZQ1a # Replace with your actual password
+    url: jdbc:postgresql://45.79.122.134:5432/inventoryservice_db?options=-c%20TimeZone=Asia/Kolkata
+    username: jack2872
+    password: Tester@4723$
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 3        # Keep below Supabase max clients in session mode
+      minimum-idle: 1
+      idle-timeout: 30000         # 30 seconds
+      connection-timeout: 30000   # 30 seconds
+      max-lifetime: 1800000       # 30 minutes
 
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
-      ddl-auto: update  # Use 'create-drop' for development, 'validate' for production
+      ddl-auto: update #validate ( prod -level )
     show-sql: true
     properties:
       hibernate:
@@ -31,7 +37,6 @@ eureka:
     prefer-ip-address: true
     instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
 
-# JWT Configuration
 jwt:
   secret: mySecretKeyForJWTShouldBeAtLeast256BitsLongForHS256Algorithm1234567890
   expiration: 86400000

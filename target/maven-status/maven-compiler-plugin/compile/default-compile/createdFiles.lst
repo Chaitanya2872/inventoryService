@@ -2,6 +2,7 @@ com\bmsedge\inventory\dto\BudgetCostAnalysisResponse$BenchmarkComparison.class
 com\bmsedge\inventory\dto\BudgetCostAnalysisResponse$BudgetConsumptionResponse.class
 com\bmsedge\inventory\repository\CategoryRepository.class
 com\bmsedge\inventory\service\FootfallService.class
+com\bmsedge\inventory\service\ConsumptionUploadService$DateColumn.class
 com\bmsedge\inventory\dto\BudgetCostAnalysisResponse$CostPerEmployeeMetrics.class
 com\bmsedge\inventory\security\AuthenticationFilter.class
 com\bmsedge\inventory\util\QRCodeGenerator.class

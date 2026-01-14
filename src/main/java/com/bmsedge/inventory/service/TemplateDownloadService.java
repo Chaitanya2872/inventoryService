@@ -163,11 +163,11 @@ public class TemplateDownloadService {
         labelCell.setCellValue("Select Month:");
         labelCell.setCellStyle(styles.get("monthLabel"));
 
-        // Month dropdown cell (unlocked for editing)
+        // Month dropdown cell - STORE AS DATE VALUE
         Cell monthCell = selectorRow.createCell(1);
-        monthCell.setCellValue(YearMonth.of(year, month).format(DateTimeFormatter.ofPattern("yyyy-MM")));
-        CellStyle unlocked = styles.get("monthDropdown");
-        monthCell.setCellStyle(unlocked);
+        LocalDate monthDate = LocalDate.of(year, month, 1); // First day of month
+        monthCell.setCellValue(monthDate); // Store as date, not text
+        monthCell.setCellStyle(styles.get("monthDropdown"));
 
         // Instructions
         Cell instructionCell = selectorRow.createCell(3);
@@ -214,19 +214,27 @@ public class TemplateDownloadService {
             cell.setCellStyle(styles.get("header"));
         }
 
-        // Date column headers (Day 1, Day 2, ... Day 31)
+        // Date column headers - SIMPLIFIED formula
         int baseCol = fixedHeaders.length;
-        LocalDate startDate = yearMonth.atDay(1);
 
         for (int day = 1; day <= daysInMonth; day++) {
             Cell cell = headerRow.createCell(baseCol + day - 1);
-            LocalDate date = startDate.plusDays(day - 1);
 
-            // Formula to make dates dynamic based on month selector
-            // =DATE(YEAR(B1), MONTH(B1), [day])
-            String dateFormula = "TEXT(DATE(YEAR($B$1),MONTH($B$1)," + day + "),\"DD-MMM\")";
-            cell.setCellFormula(dateFormula);
-            cell.setCellStyle(styles.get("dateHeader"));
+            // Since B1 is now a date (first day of month), just add days
+            // Formula: =TEXT($B$1 + (day-1), "DD-MMM")
+            String dateFormula = "TEXT($B$1+" + (day - 1) + ",\"DD-MMM\")";
+
+            try {
+                cell.setCellFormula(dateFormula);
+                cell.setCellStyle(styles.get("dateHeaderUnlocked"));
+                logger.debug("Set date formula for day {}: {}", day, dateFormula);
+            } catch (Exception e) {
+                // Fallback to static date
+                LocalDate date = yearMonth.atDay(day);
+                logger.warn("Formula failed for day {}, using static date", day);
+                cell.setCellValue(date.format(DateTimeFormatter.ofPattern("dd-MMM")));
+                cell.setCellStyle(styles.get("dateHeader"));
+            }
         }
 
         // Closing stock header
@@ -321,43 +329,89 @@ public class TemplateDownloadService {
      * Add month dropdown validation
      */
     private void addMonthDropdown(XSSFSheet sheet, int daysInMonth) {
-        DataValidationHelper validationHelper = sheet.getDataValidationHelper();
 
-        // Create list of months (yyyy-MM format)
-        String[] months = new String[12];
-        LocalDate baseDate = LocalDate.now();
-        for (int i = 0; i < 12; i++) {
-            LocalDate monthDate = baseDate.withMonth(i + 1);
-            months[i] = monthDate.format(DateTimeFormatter.ofPattern("yyyy-MM"));
+        Workbook workbook = sheet.getWorkbook();
+
+        // Create hidden sheet to store month list
+        XSSFSheet hiddenSheet = (XSSFSheet) workbook.createSheet("MonthData");
+        workbook.setSheetHidden(workbook.getSheetIndex(hiddenSheet), true);
+
+        int currentYear = LocalDate.now().getYear();
+        int endYear = 2040;     // 🔥 Change this if you want more years
+
+        // Total months from now to endYear
+        int totalMonths = (endYear - currentYear + 1) * 12;
+
+        // Date format "yyyy-mm"
+        CellStyle dateFormatStyle = workbook.createCellStyle();
+        dateFormatStyle.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm"));
+
+        // Populate months from current month up to 2040
+        LocalDate startDate = LocalDate.now().withDayOfMonth(1);
+
+        for (int i = 0; i < totalMonths; i++) {
+            Row row = hiddenSheet.createRow(i);
+            Cell cell = row.createCell(0);
+
+            LocalDate monthDate = startDate.plusMonths(i);
+
+            cell.setCellValue(monthDate);
+            cell.setCellStyle(dateFormatStyle);
         }
 
-        DataValidationConstraint constraint = validationHelper.createExplicitListConstraint(months);
-        CellRangeAddressList addressList = new CellRangeAddressList(0, 0, 1, 1); // Cell B1
+        // Create dropdown validation
+        DataValidationHelper validationHelper = sheet.getDataValidationHelper();
+
+        DataValidationConstraint constraint =
+                validationHelper.createFormulaListConstraint("MonthData!$A$1:$A$" + totalMonths);
+
+        // Dropdown applied to cell B1 (change if needed)
+        CellRangeAddressList addressList = new CellRangeAddressList(0, 0, 1, 1);
+
         DataValidation validation = validationHelper.createValidation(constraint, addressList);
 
         validation.setShowErrorBox(true);
         validation.createErrorBox("Invalid Month", "Please select a valid month from the dropdown.");
+
         validation.setShowPromptBox(true);
         validation.createPromptBox("Select Month", "Choose a month. Dates will update automatically.");
 
+        // Attach validation to sheet
         sheet.addValidationData(validation);
+
+        logger.info("Month dropdown created from " + currentYear + " to " + endYear +
+                " (" + totalMonths + " months)");
     }
+
 
     /**
      * Protect sheet - lock all except consumption cells and month selector
      */
     private void protectConsumptionSheet(XSSFSheet sheet, int itemCount, int daysInMonth) {
-        // Protect the sheet
+        // Configure sheet protection options BEFORE protecting
+        // These settings allow formulas to recalculate even when sheet is protected
+        sheet.lockFormatColumns(false);
+        sheet.lockFormatRows(false);
+        sheet.lockInsertColumns(false);
+        sheet.lockDeleteColumns(false);
+        sheet.lockInsertRows(false);
+        sheet.lockDeleteRows(false);
+
+        // Protect the sheet with password
         sheet.protectSheet("inventory2025");
 
-        // The cells with "editable" style will be unlocked
-        // The cells with "locked" style will be locked
-        // Month selector cell (B1) is already unlocked via style
+        // Log what's unlocked for verification
+        logger.info("Sheet protected. Unlocked cells:");
+        logger.info("  - Month selector: B1");
+        logger.info("  - Date headers (formulas): G3 to {}3", getColumnLetter(6 + daysInMonth - 1));
+        logger.info("  - Opening Stock: E4 to E{}", itemCount + 3);
+        logger.info("  - Total Received: F4 to F{}", itemCount + 3);
+        logger.info("  - Daily consumption: G4 to {}{}",
+                getColumnLetter(6 + daysInMonth - 1), itemCount + 3);
 
-        logger.info("Sheet protected. Editable cells: Month selector (B1), Opening Stock (E4-E{}), " +
-                        "Total Received (F4-F{}), Daily consumption (G4-{}{})",
-                itemCount + 3, itemCount + 3, getColumnLetter(6 + daysInMonth - 1), itemCount + 3);
+        logger.info("Sheet protection password: inventory2025");
     }
+
 
     /**
      * Set column widths for horizontal format
@@ -407,6 +461,8 @@ public class TemplateDownloadService {
         monthDropdownStyle.setBorderRight(BorderStyle.MEDIUM);
         monthDropdownStyle.setAlignment(HorizontalAlignment.CENTER);
         monthDropdownStyle.setLocked(false); // UNLOCKED
+
+        monthDropdownStyle.setDataFormat(workbook.createDataFormat().getFormat("yyyy-mm"));
         Font dropdownFont = workbook.createFont();
         dropdownFont.setBold(true);
         dropdownFont.setFontHeightInPoints((short) 11);
@@ -456,12 +512,31 @@ public class TemplateDownloadService {
         headerStyle.setLocked(true);
         styles.put("header", headerStyle);
 
-        // Date header style
-        CellStyle dateHeaderStyle = workbook.createCellStyle();
-        dateHeaderStyle.cloneStyleFrom(headerStyle);
-        dateHeaderStyle.setFillForegroundColor(IndexedColors.ROYAL_BLUE.getIndex());
-        dateHeaderStyle.setLocked(true);
-        styles.put("dateHeader", dateHeaderStyle);
+        // Date header style - LOCKED version (for reference)
+        CellStyle dateHeaderLockedStyle = workbook.createCellStyle();
+        dateHeaderLockedStyle.cloneStyleFrom(headerStyle);
+        dateHeaderLockedStyle.setFillForegroundColor(IndexedColors.ROYAL_BLUE.getIndex());
+        dateHeaderLockedStyle.setLocked(true);
+        styles.put("dateHeader", dateHeaderLockedStyle);
+
+        // *** NEW: Date header style - UNLOCKED version (preserves formulas in Excel) ***
+        CellStyle dateHeaderUnlockedStyle = workbook.createCellStyle();
+        dateHeaderUnlockedStyle.cloneStyleFrom(headerStyle);
+        dateHeaderUnlockedStyle.setFillForegroundColor(IndexedColors.ROYAL_BLUE.getIndex());
+        dateHeaderUnlockedStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        dateHeaderUnlockedStyle.setAlignment(HorizontalAlignment.CENTER);
+        dateHeaderUnlockedStyle.setVerticalAlignment(VerticalAlignment.CENTER);
+        dateHeaderUnlockedStyle.setBorderBottom(BorderStyle.THIN);
+        dateHeaderUnlockedStyle.setBorderTop(BorderStyle.THIN);
+        dateHeaderUnlockedStyle.setBorderLeft(BorderStyle.THIN);
+        dateHeaderUnlockedStyle.setBorderRight(BorderStyle.THIN);
+        Font dateHeaderFont = workbook.createFont();
+        dateHeaderFont.setBold(true);
+        dateHeaderFont.setFontHeightInPoints((short) 11);
+        dateHeaderFont.setColor(IndexedColors.WHITE.getIndex());
+        dateHeaderUnlockedStyle.setFont(dateHeaderFont);
+        dateHeaderUnlockedStyle.setLocked(false); // CRITICAL: Must be unlocked to preserve formulas
+        styles.put("dateHeaderUnlocked", dateHeaderUnlockedStyle);
 
         // Locked cell style (read-only)
         CellStyle lockedStyle = workbook.createCellStyle();
@@ -503,6 +578,7 @@ public class TemplateDownloadService {
 
         return styles;
     }
+
 
     /**
      * Create instructions for horizontal consumption template
