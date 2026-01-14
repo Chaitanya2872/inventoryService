@@ -1,193 +1,58 @@
 server:
-  port: 8080
+  port: 8082
 
 spring:
   application:
-    name: api-gateway
+    name: INVENTORY-SERVICE  # FIXED: Changed to uppercase to match gateway route
 
-  cloud:
-    gateway:
-      default-filters:
-        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
-        - name: Retry
-          args:
-            retries: 3
-            statuses: BAD_GATEWAY,GATEWAY_TIMEOUT,SERVICE_UNAVAILABLE
-            methods: GET,POST,PUT,DELETE
-            backoff:
-              firstBackoff: 50ms
-              maxBackoff: 500ms
-              factor: 2
+  datasource:
+    url: jdbc:postgresql://45.79.122.134:5432/inventoryservice_db?options=-c%20TimeZone=Asia/Kolkata
+    username: jack2872
+    password: Tester@4723$
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 1
+      idle-timeout: 30000
+      connection-timeout: 30000
+      max-lifetime: 1800000
 
-      globalcors:
-        cors-configurations:
-          '[/**]':
-            allowedOrigins:
-              - "http://localhost:3000"
-              - "http://localhost:4200"
-              - "http://45.79.121.181:80"
-              - "http://45.79.121.181:3000"
-              - "https://*.iotiq.co.in"
-            allowedMethods:
-              - GET
-              - POST
-              - PUT
-              - DELETE
-              - PATCH
-              - OPTIONS
-            allowedHeaders: "*"
-            allowCredentials: true
-            maxAge: 3600
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
 
-      routes:
-        # ========================================
-        # USER SERVICE - Authentication
-        # ========================================
-        - id: user-service-auth
-          uri: lb://USER-SERVICE
-          predicates:
-            - Path=/api/auth/**
-          filters:
-            - RewritePath=/api/auth/(?<segment>.*), /api/auth/${segment}
-
-        - id: user-service
-          uri: lb://USER-SERVICE
-          predicates:
-            - Path=/api/users/**
-          filters:
-            - RewritePath=/api/users/(?<segment>.*), /api/users/${segment}
-
-        # ========================================
-        # INVENTORY SERVICE - Direct paths (no /inventory prefix)
-        # This matches what your frontend already sends
-        # ========================================
-        - id: inventory-items
-          uri: lb://INVENTORY-SERVICE
-          predicates:
-            - Path=/api/items/**
-          filters:
-            - RewritePath=/api/items/(?<segment>.*), /api/items/${segment}
-
-        - id: inventory-categories
-          uri: lb://INVENTORY-SERVICE
-          predicates:
-            - Path=/api/categories/**
-          filters:
-            - RewritePath=/api/categories/(?<segment>.*), /api/categories/${segment}
-
-        - id: inventory-units
-          uri: lb://INVENTORY-SERVICE
-          predicates:
-            - Path=/api/units/**
-          filters:
-            - RewritePath=/api/units/(?<segment>.*), /api/units/${segment}
-
-        - id: inventory-upload
-          uri: lb://INVENTORY-SERVICE
-          predicates:
-            - Path=/api/upload/**
-          filters:
-            - RewritePath=/api/upload/(?<segment>.*), /api/upload/${segment}
-
-        - id: inventory-templates
-          uri: lb://INVENTORY-SERVICE
-          predicates:
-            - Path=/api/templates/**
-          filters:
-            - RewritePath=/api/templates/(?<segment>.*), /api/templates/${segment}
-
-        - id: inventory-analytics
-          uri: lb://INVENTORY-SERVICE
-          predicates:
-            - Path=/api/analytics/**
-          filters:
-            - RewritePath=/api/analytics/(?<segment>.*), /api/analytics/${segment}
-
-        - id: inventory-statistics
-          uri: lb://INVENTORY-SERVICE
-          predicates:
-            - Path=/api/statistics/**
-          filters:
-            - RewritePath=/api/statistics/(?<segment>.*), /api/statistics/${segment}
-
-        - id: inventory-footfall
-          uri: lb://INVENTORY-SERVICE
-          predicates:
-            - Path=/api/footfall/**
-          filters:
-            - RewritePath=/api/footfall/(?<segment>.*), /api/footfall/${segment}
-
-        # ========================================
-        # OTHER SERVICES
-        # ========================================
-        - id: iot-sensors-service
-          uri: lb://IOT-SENSORS-SERVICE
-          predicates:
-            - Path=/api/sensors/**
-          filters:
-            - RewritePath=/api/sensors/(?<segment>.*), /api/sensors/${segment}
-
-        - id: assets-management-service
-          uri: lb://ASSETS-MANAGEMENT-SERVICE
-          predicates:
-            - Path=/api/assets/**
-          filters:
-            - RewritePath=/api/assets/(?<segment>.*), /api/assets/${segment}
-
-        - id: meal-forecasting-service
-          uri: lb://MEAL-FORECASTING-SERVICE
-          predicates:
-            - Path=/api/meal/**
-          filters:
-            - RewritePath=/api/meal/(?<segment>.*), /api/meal/${segment}
-
-        - id: energy-management-service
-          uri: lb://ENERGY-MANAGEMENT-SERVICE
-          predicates:
-            - Path=/api/energy/**
-          filters:
-            - RewritePath=/api/energy/(?<segment>.*), /api/energy/${segment}
-
-        - id: analytics-service
-          uri: lb://ANALYTICS-SERVICE
-          predicates:
-            - Path=/api/analytics-service/**
-          filters:
-            - RewritePath=/api/analytics-service/(?<segment>.*), /api/analytics/${segment}
-
-        - id: visitor-management-service
-          uri: lb://VISITOR-MANAGEMENT-SERVICE
-          predicates:
-            - Path=/api/visitors/**
-          filters:
-            - RewritePath=/api/visitors/(?<segment>.*), /api/visitors/${segment}
-
+# FIXED: Eureka configuration
 eureka:
   client:
+    service-url:
+      defaultZone: http://eureka-server:8761/eureka/  # FIXED: Use actual server IP
     register-with-eureka: true
     fetch-registry: true
-    service-url:
-      defaultZone: http://${EUREKA_USERNAME:eureka}:${EUREKA_PASSWORD:password}@${EUREKA_HOST:localhost}:${EUREKA_PORT:8761}/eureka/
-    registry-fetch-interval-seconds: 10
-
   instance:
-    prefer-ip-address: true
+    prefer-ip-address: true  # FIXED: Use IP instead of hostname
     instance-id: ${spring.application.name}:${random.value}
-    lease-renewal-interval-in-seconds: 10
-    lease-expiration-duration-in-seconds: 30
+    # REMOVED hostname: localhost - let Eureka auto-detect
 
 jwt:
-  secret: ${JWT_SECRET:0123456789abcdef0123456789abcdef}
-  expiration: ${JWT_EXPIRATION:86400000}
+  secret: mySecretKeyForJWTShouldBeAtLeast256BitsLongForHS256Algorithm1234567890
+  expiration: 86400000
+
+logging:
+  level:
+    root: INFO
+    com.bmsedge.inventory: DEBUG
+    org.springframework.security: DEBUG
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,gateway,metrics,prometheus
-
-logging:
-  level:
-    root: INFO
-    com.bmsedge.gateway: DEBUG
-    org.springframework.cloud.gateway: DEBUG
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
